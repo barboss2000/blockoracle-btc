@@ -18,9 +18,29 @@ body {
   display:flex;
   justify-content:space-between;
   align-items:center;
-  padding:15px 25px;
+  padding:15px 30px;
   background:#0e1322;
 }
+
+.brand {
+  display:flex;
+  align-items:center;
+  gap:15px;
+}
+
+.brand img {
+  height:32px;
+}
+
+.network {
+  padding:6px 12px;
+  border-radius:6px;
+  font-size:13px;
+  margin-right:10px;
+}
+
+.testnet { background:#16a34a; }
+.mainnet { background:#444; opacity:0.6; }
 
 .wallet-btn {
   background:#f7931a;
@@ -29,6 +49,11 @@ body {
   border-radius:8px;
   cursor:pointer;
   font-weight:bold;
+  transition:0.2s;
+}
+
+.wallet-btn:hover {
+  transform:scale(1.05);
 }
 
 .container {
@@ -38,11 +63,20 @@ body {
   text-align:center;
 }
 
-.card {
-  background:rgba(255,255,255,0.05);
-  padding:20px;
-  border-radius:14px;
-  margin-top:20px;
+.hero-logo {
+  margin:30px 0;
+}
+
+.hero-logo svg {
+  filter: drop-shadow(0 0 20px rgba(247,147,26,0.6));
+}
+
+select, input {
+  padding:10px;
+  border-radius:8px;
+  border:none;
+  font-size:16px;
+  margin:10px;
 }
 
 button {
@@ -57,12 +91,23 @@ button {
 .yes { background:#16a34a; color:white; }
 .no { background:#dc2626; color:white; }
 .timer-btn { background:#1f2937; color:white; }
-
 .timer-btn.active { background:#f7931a; color:black; }
+
+.card {
+  background:rgba(255,255,255,0.05);
+  padding:20px;
+  border-radius:14px;
+  margin-top:20px;
+}
 
 .leaderboard {
   text-align:left;
   margin-top:20px;
+}
+
+footer {
+  margin-top:50px;
+  opacity:0.5;
 }
 </style>
 </head>
@@ -70,9 +115,18 @@ button {
 <body>
 
 <div class="topbar">
-  <div>🔮 BlockOracle Pro</div>
-  <div class="wallet-btn" onclick="connectWallet()" id="walletBtn">
-    Connect OP_WALLET
+  <div class="brand">
+    <!-- OP_NET Logo -->
+    <img src="opnet-logo.png" alt="OP_NET">
+    <strong>BlockOracle Pro</strong>
+  </div>
+
+  <div style="display:flex;align-items:center;">
+    <div class="network testnet">Testnet</div>
+    <div class="network mainnet">Mainnet (Soon)</div>
+    <div class="wallet-btn" onclick="connectWallet()" id="walletBtn">
+      Connect OP_WALLET
+    </div>
   </div>
 </div>
 
@@ -80,6 +134,16 @@ button {
 
 <h2>Balance: <span id="balance">10000</span> $PILL</h2>
 <h3>Win Streak: <span id="streak">0</span></h3>
+
+<!-- Bitcoin Hero Logo -->
+<div class="hero-logo">
+  <svg width="110" height="110" viewBox="0 0 32 32">
+    <circle cx="16" cy="16" r="16" fill="#f7931a"/>
+    <text x="16" y="21" text-anchor="middle"
+          font-size="16" fill="white"
+          font-family="Arial" font-weight="bold">₿</text>
+  </svg>
+</div>
 
 <select id="coinSelect" onchange="changeCoin()">
   <option value="BTCUSDT">BTC</option>
@@ -92,22 +156,19 @@ button {
 <div id="tv_chart" style="height:350px;margin-top:20px;"></div>
 
 <div class="card">
-
 <h3>Select Duration</h3>
 <button class="timer-btn" onclick="selectTime(60,this)">1m</button>
 <button class="timer-btn" onclick="selectTime(120,this)">2m</button>
 <button class="timer-btn" onclick="selectTime(180,this)">3m</button>
 
 <h3>Bet Amount ($PILL)</h3>
-<input type="number" id="betAmount" placeholder="100" />
+<input type="number" id="betAmount" placeholder="100">
 
 <br>
-
 <button class="yes" onclick="placeBet('UP')">UP</button>
 <button class="no" onclick="placeBet('DOWN')">DOWN</button>
 
 <div id="countdown"></div>
-
 </div>
 
 <div class="card">
@@ -123,6 +184,10 @@ button {
 <div id="leaderboardProfit"></div>
 </div>
 
+<footer>
+Powered by OP_NET — Demo Prediction dApp
+</footer>
+
 </div>
 
 <script>
@@ -135,8 +200,6 @@ let startPrice=0;
 let currentSymbol="BTCUSDT";
 let turnover=0;
 let profitTotal=0;
-
-let leaderboardData = [];
 
 function connectWallet(){
   connected=true;
@@ -169,8 +232,8 @@ function selectTime(sec,btn){
 }
 
 async function getPrice(){
-  const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${currentSymbol}`);
-  const data = await res.json();
+  const res=await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${currentSymbol}`);
+  const data=await res.json();
   return parseFloat(data.price);
 }
 
@@ -213,11 +276,6 @@ async function placeBet(direction){
         profitTotal-=amount;
         streak=0;
       }
-
-      leaderboardData.push({
-        turnover:turnover,
-        profit:profitTotal
-      });
 
       updateUI();
       updateLeaderboard();
