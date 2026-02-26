@@ -14,6 +14,45 @@ body {
   color: white;
 }
 
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px 30px;
+  background: #0e1322;
+}
+
+.logo {
+  font-weight: bold;
+  font-size: 20px;
+}
+
+.network {
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  margin-right: 10px;
+}
+
+.testnet { background: #16a34a; }
+.mainnet { background: #444; opacity: 0.6; }
+
+.wallet-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #f7931a;
+  color: black;
+  padding: 8px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: bold;
+}
+
+.wallet-btn img {
+  height: 18px;
+}
+
 .container {
   max-width: 1200px;
   margin: auto;
@@ -40,12 +79,6 @@ button {
 
 .yes { background: #16a34a; color: white; }
 .no { background: #dc2626; color: white; }
-.timer-btn { background: #1f2937; color: white; }
-
-.timer-btn.active {
-  background: #f7931a;
-  color: black;
-}
 
 .card {
   background: rgba(255,255,255,0.05);
@@ -68,13 +101,25 @@ footer {
 </head>
 
 <body>
+
+<div class="topbar">
+  <div class="logo">🔮 BlockOracle</div>
+
+  <div style="display:flex;align-items:center;">
+    <div class="network testnet">Testnet</div>
+    <div class="network mainnet">Mainnet (Soon)</div>
+
+    <div class="wallet-btn" onclick="connectWallet()">
+      <img src="https://i.imgur.com/7yUvePI.png" alt="OP Wallet"/>
+      <span id="walletText">Connect OP_WALLET</span>
+    </div>
+  </div>
+</div>
+
 <div class="container">
 
-<h1>🔮 BlockOracle</h1>
-<p>Predict short-term price moves using $PILL</p>
-
-<!-- Coin Selector -->
 <h2>Select Asset</h2>
+
 <select id="coinSelect" onchange="changeCoin()">
   <option value="BINANCE:BTCUSDT">Bitcoin (BTC)</option>
   <option value="BINANCE:ETHUSDT">Ethereum (ETH)</option>
@@ -88,19 +133,17 @@ footer {
   <option value="BINANCE:DOTUSDT">Polkadot (DOT)</option>
 </select>
 
-<!-- Chart -->
 <div id="tv_chart" style="height:400px;margin-top:20px;"></div>
 
 <div class="card">
 
 <h2>Select Duration</h2>
-<div>
-  <button class="timer-btn" onclick="selectTime(60)">1m</button>
-  <button class="timer-btn" onclick="selectTime(120)">2m</button>
-  <button class="timer-btn" onclick="selectTime(180)">3m</button>
-  <button class="timer-btn" onclick="selectTime(240)">4m</button>
-  <button class="timer-btn" onclick="selectTime(300)">5m</button>
-</div>
+
+<button onclick="selectTime(60)">1m</button>
+<button onclick="selectTime(120)">2m</button>
+<button onclick="selectTime(180)">3m</button>
+<button onclick="selectTime(240)">4m</button>
+<button onclick="selectTime(300)">5m</button>
 
 <div class="countdown" id="countdown">No active round</div>
 
@@ -115,7 +158,7 @@ footer {
 </div>
 
 <footer>
-Demo Prediction Interface — $PILL token integration coming soon
+OP_WALLET integration coming soon — Demo UI only
 </footer>
 
 </div>
@@ -123,13 +166,13 @@ Demo Prediction Interface — $PILL token integration coming soon
 <script>
 
 let currentSymbol = "BINANCE:BTCUSDT";
-let widget;
 let timer;
 let timeLeft = 0;
+let connected = false;
 
 function loadChart(symbol) {
   document.getElementById("tv_chart").innerHTML = "";
-  widget = new TradingView.widget({
+  new TradingView.widget({
     container_id: "tv_chart",
     width: "100%",
     height: 400,
@@ -138,11 +181,7 @@ function loadChart(symbol) {
     timezone: "Etc/UTC",
     theme: "dark",
     style: "1",
-    locale: "en",
-    toolbar_bg: "#0b0f1a",
-    enable_publishing: false,
-    hide_top_toolbar: false,
-    save_image: false
+    locale: "en"
   });
 }
 
@@ -169,7 +208,19 @@ function selectTime(seconds) {
   }, 1000);
 }
 
+function connectWallet() {
+  if (!connected) {
+    connected = true;
+    document.getElementById("walletText").innerText = "Connected";
+  }
+}
+
 function placeBet(direction) {
+  if (!connected) {
+    alert("Connect OP_WALLET first");
+    return;
+  }
+
   const amount = document.getElementById("betAmount").value;
 
   if (!amount) {
