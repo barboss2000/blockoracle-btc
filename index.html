@@ -24,10 +24,6 @@ body {
   background:#0e1322;
 }
 
-.brand {
-  font-weight:bold;
-}
-
 .wallet-btn {
   background:#f7931a;
   color:black;
@@ -35,46 +31,59 @@ body {
   border-radius:8px;
   cursor:pointer;
   font-weight:bold;
-  transition:0.2s;
-}
-
-.wallet-btn:hover {
-  transform:scale(1.05);
 }
 
 /* ===== HERO ===== */
 
 .hero {
-  height:50vh;
-  display:flex;
-  flex-direction:column;
-  justify-content:center;
-  align-items:center;
+  padding:60px 20px 30px 20px;
   text-align:center;
 }
 
 .hero img {
-  height:80px;
-  margin-bottom:25px;
-  filter: drop-shadow(0 0 25px rgba(247,147,26,0.6));
+  height:120px; /* УВЕЛИЧИЛ ЛОГО */
+  margin-bottom:30px;
+  filter: drop-shadow(0 0 35px rgba(247,147,26,0.6));
 }
 
 .hero h1 {
-  font-size:32px;
-  margin:10px 0;
+  font-size:34px;
 }
 
 .hero p {
   opacity:0.7;
 }
 
+/* ===== STATS ===== */
+
+.stats {
+  display:flex;
+  justify-content:center;
+  gap:40px;
+  margin:30px 0;
+  font-size:18px;
+}
+
+.stat-box {
+  background:rgba(255,255,255,0.05);
+  padding:15px 25px;
+  border-radius:12px;
+}
+
 /* ===== MAIN ===== */
 
 .container {
-  max-width:1200px;
+  max-width:1000px;
   margin:auto;
-  padding:30px;
+  padding:20px;
   text-align:center;
+}
+
+.card {
+  background:rgba(255,255,255,0.05);
+  padding:20px;
+  border-radius:14px;
+  margin-top:20px;
 }
 
 select, input {
@@ -99,15 +108,13 @@ button {
 .yes { background:#16a34a; color:white; }
 .no { background:#dc2626; color:white; }
 
-.card {
-  background:rgba(255,255,255,0.05);
-  padding:20px;
-  border-radius:14px;
-  margin-top:20px;
+.leaderboard {
+  margin-top:30px;
+  text-align:left;
 }
 
 footer {
-  margin-top:40px;
+  margin:40px 0;
   opacity:0.5;
   text-align:center;
 }
@@ -117,13 +124,13 @@ footer {
 <body>
 
 <div class="topbar">
-  <div class="brand">BlockOracle Pro</div>
+  <strong>BlockOracle Pro</strong>
   <div class="wallet-btn" onclick="connectWallet()" id="walletBtn">
     Connect OP_WALLET
   </div>
 </div>
 
-<!-- ===== HERO WITH REAL OP_NET LOGO ===== -->
+<!-- HERO -->
 
 <div class="hero">
   <img src="opnet-logo.png" alt="OP_NET Logo">
@@ -131,7 +138,13 @@ footer {
   <p>Trade short-term price moves using $PILL</p>
 </div>
 
-<!-- ===== MAIN CONTENT ===== -->
+<!-- STATS -->
+
+<div class="stats">
+  <div class="stat-box">Balance: <b id="balance">10000</b> $PILL</div>
+  <div class="stat-box">Win Streak: <b id="streak">0</b></div>
+  <div class="stat-box">Profit: <b id="profit">0</b></div>
+</div>
 
 <div class="container">
 
@@ -159,6 +172,16 @@ footer {
 <div id="countdown"></div>
 </div>
 
+<div class="card">
+<h3>AI Signal</h3>
+<div id="aiSignal">Analyzing...</div>
+</div>
+
+<div class="card leaderboard">
+<h3>Leaderboard</h3>
+<div id="leaderboard"></div>
+</div>
+
 <footer>
 Powered by OP_NET
 </footer>
@@ -168,8 +191,13 @@ Powered by OP_NET
 <script>
 
 let connected=false;
+let balance=10000;
+let streak=0;
 let selectedTime=0;
+let startPrice=0;
 let currentSymbol="BTCUSDT";
+let profitTotal=0;
+let turnover=0;
 
 function connectWallet(){
   connected=true;
@@ -201,13 +229,81 @@ function selectTime(sec,btn){
   btn.classList.add("active");
 }
 
-function placeBet(direction){
-  if(!connected){ alert("Connect wallet first"); return; }
-  if(selectedTime===0){ alert("Select duration"); return; }
-  alert("Bet placed: "+direction);
+async function getPrice(){
+  const res=await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${currentSymbol}`);
+  const data=await res.json();
+  return parseFloat(data.price);
 }
 
+async function placeBet(direction){
+
+  if(!connected){ alert("Connect wallet first"); return; }
+
+  const amount=parseFloat(document.getElementById("betAmount").value);
+  if(!amount || amount>balance){ alert("Invalid amount"); return; }
+  if(selectedTime===0){ alert("Select duration"); return; }
+
+  balance-=amount;
+  turnover+=amount;
+  updateUI();
+
+  startPrice=await getPrice();
+
+  let timeLeft=selectedTime;
+  document.getElementById("countdown").innerText="Round: "+timeLeft+"s";
+
+  let timer=setInterval(async()=>{
+    timeLeft--;
+    document.getElementById("countdown").innerText="Round: "+timeLeft+"s";
+
+    if(timeLeft<=0){
+      clearInterval(timer);
+
+      let endPrice=await getPrice();
+      let win=false;
+
+      if(direction==="UP" && endPrice>startPrice) win=true;
+      if(direction==="DOWN" && endPrice<startPrice) win=true;
+
+      if(win){
+        let reward=amount*1.9;
+        balance+=reward;
+        profitTotal+=reward-amount;
+        streak++;
+      } else {
+        profitTotal-=amount;
+        streak=0;
+      }
+
+      updateUI();
+      updateLeaderboard();
+    }
+
+  },1000);
+}
+
+function updateUI(){
+  document.getElementById("balance").innerText=balance.toFixed(2);
+  document.getElementById("streak").innerText=streak;
+  document.getElementById("profit").innerText=profitTotal.toFixed(2);
+}
+
+function updateLeaderboard(){
+  document.getElementById("leaderboard").innerHTML=
+    "Turnover: "+turnover.toFixed(2)+" $PILL<br>"+
+    "Total Profit: "+profitTotal.toFixed(2)+" $PILL";
+}
+
+function aiSignal(){
+  const signals=["Bullish","Bearish","Neutral"];
+  const rand=signals[Math.floor(Math.random()*3)];
+  document.getElementById("aiSignal").innerText=rand;
+}
+
+setInterval(aiSignal,4000);
+
 loadChart();
+updateUI();
 
 </script>
 
