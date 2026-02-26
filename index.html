@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="UTF-8" />
-<title>BlockOracle Pro</title>
+<title>BlockOracle</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <script src="https://s3.tradingview.com/tv.js"></script>
 
@@ -14,7 +14,7 @@ body {
   color: white;
 }
 
-/* ===== TOPBAR ===== */
+/* TOPBAR */
 .topbar {
   display:flex;
   justify-content:space-between;
@@ -32,27 +32,33 @@ body {
   font-weight:bold;
 }
 
-/* ===== HERO ===== */
+/* HERO */
 .hero {
   padding:60px 20px 30px 20px;
   text-align:center;
 }
 
 .hero img {
-  height:120px;
-  margin-bottom:30px;
-  filter: drop-shadow(0 0 35px rgba(247,147,26,0.6));
+  height:160px;
+  margin-bottom:25px;
+  filter: drop-shadow(0 0 40px rgba(255,165,0,0.6));
+  transition:0.3s ease;
+}
+
+.hero img:hover {
+  transform:scale(1.05);
 }
 
 .hero h1 {
-  font-size:34px;
+  font-size:36px;
+  margin:10px 0;
 }
 
 .hero p {
   opacity:0.7;
 }
 
-/* ===== STATS ===== */
+/* STATS */
 .stats {
   display:flex;
   justify-content:center;
@@ -68,7 +74,7 @@ body {
   border-radius:12px;
 }
 
-/* ===== MAIN ===== */
+/* MAIN */
 .container {
   max-width:1000px;
   margin:auto;
@@ -129,16 +135,16 @@ footer {
 <body>
 
 <div class="topbar">
-  <strong>BlockOracle Pro</strong>
+  <strong>BlockOracle</strong>
   <div class="wallet-btn" onclick="connectWallet()" id="walletBtn">
     Connect OP_WALLET
   </div>
 </div>
 
 <div class="hero">
-  <img src="opnet-logo.png" alt="OP_NET Logo">
-  <h1>Prediction Markets on OP_NET</h1>
-  <p>Trade short-term price moves using $PILL</p>
+  <img src="blockoracle-logo.png" alt="BlockOracle Logo">
+  <h1>Lightning Prediction Markets</h1>
+  <p>Fast 1–5 minute price battles powered by $PILL</p>
 </div>
 
 <div class="stats">
@@ -191,7 +197,7 @@ footer {
 </div>
 
 <footer>
-Powered by OP_NET
+© 2026 BlockOracle — Lightning Oracle Markets
 </footer>
 
 </div>
