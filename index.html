@@ -15,7 +15,6 @@ body {
 }
 
 /* ===== TOPBAR ===== */
-
 .topbar {
   display:flex;
   justify-content:space-between;
@@ -34,14 +33,13 @@ body {
 }
 
 /* ===== HERO ===== */
-
 .hero {
   padding:60px 20px 30px 20px;
   text-align:center;
 }
 
 .hero img {
-  height:120px; /* УВЕЛИЧИЛ ЛОГО */
+  height:120px;
   margin-bottom:30px;
   filter: drop-shadow(0 0 35px rgba(247,147,26,0.6));
 }
@@ -55,13 +53,13 @@ body {
 }
 
 /* ===== STATS ===== */
-
 .stats {
   display:flex;
   justify-content:center;
   gap:40px;
   margin:30px 0;
   font-size:18px;
+  flex-wrap:wrap;
 }
 
 .stat-box {
@@ -71,7 +69,6 @@ body {
 }
 
 /* ===== MAIN ===== */
-
 .container {
   max-width:1000px;
   margin:auto;
@@ -103,8 +100,16 @@ button {
   font-weight:bold;
 }
 
+.timer-wrapper {
+  display:flex;
+  justify-content:center;
+  flex-wrap:wrap;
+  gap:10px;
+}
+
 .timer-btn { background:#1f2937; color:white; }
 .timer-btn.active { background:#f7931a; color:black; }
+
 .yes { background:#16a34a; color:white; }
 .no { background:#dc2626; color:white; }
 
@@ -130,15 +135,11 @@ footer {
   </div>
 </div>
 
-<!-- HERO -->
-
 <div class="hero">
   <img src="opnet-logo.png" alt="OP_NET Logo">
   <h1>Prediction Markets on OP_NET</h1>
   <p>Trade short-term price moves using $PILL</p>
 </div>
-
-<!-- STATS -->
 
 <div class="stats">
   <div class="stat-box">Balance: <b id="balance">10000</b> $PILL</div>
@@ -153,14 +154,21 @@ footer {
   <option value="ETHUSDT">ETH</option>
   <option value="BNBUSDT">BNB</option>
   <option value="SOLUSDT">SOL</option>
+  <option value="XRPUSDT">XRP</option>
 </select>
 
 <div id="tv_chart" style="height:350px;margin-top:20px;"></div>
 
 <div class="card">
 <h3>Select Duration</h3>
-<button class="timer-btn" onclick="selectTime(60,this)">1m</button>
-<button class="timer-btn" onclick="selectTime(120,this)">2m</button>
+
+<div class="timer-wrapper">
+  <button class="timer-btn" onclick="selectTime(60,this)">1m</button>
+  <button class="timer-btn" onclick="selectTime(120,this)">2m</button>
+  <button class="timer-btn" onclick="selectTime(180,this)">3m</button>
+  <button class="timer-btn" onclick="selectTime(240,this)">4m</button>
+  <button class="timer-btn" onclick="selectTime(300,this)">5m</button>
+</div>
 
 <h3>Bet Amount ($PILL)</h3>
 <input type="number" id="betAmount" placeholder="100">
