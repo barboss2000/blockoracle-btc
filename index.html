@@ -331,207 +331,360 @@ body{background:#0a0d0a;color:var(--text);font-family:'DM Mono',monospace;min-he
 </div>
 
 <script>
-// ─── Contract config ──────────────────────────────────────────────────────────
-// REPLACE with your deployed contract address on OP_NET
-const CONTRACT_ADDRESS = 'YOUR_CONTRACT_ADDRESS_HERE';
-const OPNET_RPC = 'https://api.opnet.org';
-const OPNET_TESTNET_RPC = 'https://testnet.opnet.org';
 
-// Use testnet for development — change to OPNET_RPC for mainnet
-const RPC_URL = OPNET_TESTNET_RPC;
-const NETWORK  = 'testnet'; // 'mainnet' or 'testnet'
+// ─── Config ──────────────────────────────────────────────────────────────────
+const BLOCKBET_CONTRACT_ADDRESS = 'opr1sqqrgl4fwkxgtgdjg96t49wwwekl2fz6gacrgnall';
+const OPNET_NODE_URL   = 'https://mainnet.opnet.org';
+const MEMPOOL_API      = 'https://mempool.space/api';
+const MIN_BET_SATS     = 10000;
+const AVG_BLOCK_SECS   = 600;
 
-const MIN_BET_SATS = 10000;
+// Method signatures — must exactly match contract's encodeSelector()
+const SELECTORS = {
+  bet:                  'bet(bool,uint64)',
+  settle:               'settle()',
+  claim:                'claim()',
+  withdraw:             'withdraw()',
+  startNewRound:        'startNewRound()',
+  getRoundInfo:         'getRoundInfo()',
+  getBetInfo:           'getBetInfo(address)',
+  getPendingWithdrawal: 'getPendingWithdrawal(address)',
+  setTreasury:          'setTreasury(address)',
+};
 
 // ─── State ────────────────────────────────────────────────────────────────────
-let walletConnected = false;
-let walletAddress   = null;
-let walletPubKey    = null;
+let account          = null; // { address, publicKey, addressType }
+let opnetAddress     = null; // Uint8Array 32 bytes
+let roundInfo        = null;
+let betInfo          = null;
+let pendingWithdrawal = 0n;
+let chainTip         = null;
+let secondsToBlock   = AVG_BLOCK_SECS;
+let countdownInterval = null;
+let isBetting = false;
 
-let roundData = {
-  roundId: 0, targetBlock: 0, evenPool: 0, oddPool: 0,
-  settled: false, winnerSide: 0, currentBlock: 0, winningBlock: 0
-};
-let myBetData = { evenBet: 0, oddBet: 0, claimed: false };
-let pendingWithdrawal = 0;
+// ─── Encoding utils (from opnet.ts) ──────────────────────────────────────────
 
-const priceCache = {};
+function toHex(bytes) {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+function fromHex(hex) {
+  const clean = hex.startsWith('0x') ? hex.slice(2) : hex;
+  const out = new Uint8Array(clean.length / 2);
+  for (let i = 0; i < out.length; i++)
+    out[i] = parseInt(clean.slice(i*2, i*2+2), 16);
+  return out;
+}
+function concat(...arrays) {
+  const total = arrays.reduce((n,a) => n + a.length, 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const a of arrays) { out.set(a, off); off += a.length; }
+  return out;
+}
+function encodeBool(v) { return new Uint8Array([v ? 1 : 0]); }
+function encodeU64(v) {
+  const n = BigInt(v), buf = new Uint8Array(8);
+  for (let i = 0; i < 8; i++) buf[7-i] = Number((n >> BigInt(i*8)) & 0xffn);
+  return buf;
+}
+function encodeOpnetAddress(bytes) {
+  if (bytes.length !== 32) throw new Error('Address must be 32 bytes');
+  return bytes;
+}
 
-// ─── OPWallet connect ────────────────────────────────────────────────────────
+// FNV-1a 32-bit, little-endian — matches btc-runtime encodeSelector()
+function encodeSelector(sig) {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < sig.length; i++) {
+    hash ^= sig.charCodeAt(i);
+    hash = (Math.imul(hash, 0x01000193) >>> 0);
+  }
+  const buf = new Uint8Array(4);
+  new DataView(buf.buffer).setUint32(0, hash, true); // little-endian
+  return buf;
+}
+
+function buildCalldata(sig, ...args) {
+  return toHex(concat(encodeSelector(sig), ...args));
+}
+
+async function pubkeyToOpnetAddress(pubkeyHex) {
+  const bytes  = fromHex(pubkeyHex);
+  const hashed = await crypto.subtle.digest('SHA-256', bytes.buffer);
+  return new Uint8Array(hashed);
+}
+
+function satsToBtc(sats) {
+  return (Number(sats) / 1e8).toFixed(8).replace(/\.?0+$/, '') || '0';
+}
+function btcToSats(btc) {
+  return Math.round(parseFloat(btc) * 1e8);
+}
+
+// ─── ABI Decoder ─────────────────────────────────────────────────────────────
+
+class BytesDecoder {
+  constructor(hex) {
+    const bytes = fromHex(hex);
+    this._view = new DataView(bytes.buffer);
+    this._off = 0;
+  }
+  readBoolean() { return this._view.getUint8(this._off++) !== 0; }
+  readU256() {
+    let v = 0n;
+    for (let i = 0; i < 32; i++)
+      v = (v << 8n) | BigInt(this._view.getUint8(this._off + i));
+    this._off += 32;
+    return v;
+  }
+}
+
+function decodeRoundInfo(hex) {
+  const d = new BytesDecoder(hex);
+  return {
+    roundId:      d.readU256(),
+    targetBlock:  d.readU256(),
+    evenPool:     d.readU256(),
+    oddPool:      d.readU256(),
+    settled:      d.readBoolean(),
+    winnerSide:   Number(d.readU256()), // 0=unknown,1=even,2=odd
+    currentBlock: d.readU256(),
+    winningBlock: d.readU256(),
+  };
+}
+function decodeBetInfo(hex) {
+  const d = new BytesDecoder(hex);
+  return { evenBet: d.readU256(), oddBet: d.readU256(), claimed: d.readBoolean() };
+}
+function decodePendingWithdrawal(hex) {
+  return new BytesDecoder(hex).readU256();
+}
+
+// ─── OP_NET RPC (read-only) ───────────────────────────────────────────────────
+
+async function contractRead(sig, args = []) {
+  const calldata = buildCalldata(sig, ...args);
+  const rpcUrl = OPNET_NODE_URL.includes('/api/v1/json-rpc')
+    ? OPNET_NODE_URL
+    : `${OPNET_NODE_URL}/api/v1/json-rpc`;
+
+  const res = await fetch(rpcUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0', method: 'btc_call',
+      params: [BLOCKBET_CONTRACT_ADDRESS, calldata],
+      id: 1,
+    }),
+  });
+  if (!res.ok) throw new Error(`RPC ${res.status}: ${res.statusText}`);
+  const json = await res.json();
+  if (json.error) {
+    const msg = typeof json.error === 'string' ? json.error : json.error.message;
+    throw new Error(`OP_NET: ${msg}`);
+  }
+  let data = '';
+  if (typeof json.result === 'string') data = json.result;
+  else if (json.result) data = json.result.result ?? json.result.data ?? '';
+  if (data.startsWith('0x')) data = data.slice(2);
+  return { data };
+}
+
+// ─── OPWallet transaction ─────────────────────────────────────────────────────
+
+async function contractCall(sig, args = [], valueSats = 0) {
+  if (!window.opnet) throw new Error('OPWallet not detected');
+  const calldata = buildCalldata(sig, ...args);
+  // Exact API from opnet.ts: signAndBroadcastInteraction({ to, calldata, value })
+  return window.opnet.signAndBroadcastInteraction({
+    to:       BLOCKBET_CONTRACT_ADDRESS,
+    calldata: calldata,
+    value:    valueSats,
+  });
+}
+
+// ─── Chain tip (mempool.space) ────────────────────────────────────────────────
+
+async function fetchChainTip() {
+  const [hRes, hashRes] = await Promise.all([
+    fetch(`${MEMPOOL_API}/blocks/tip/height`),
+    fetch(`${MEMPOOL_API}/blocks/tip/hash`),
+  ]);
+  const height = parseInt(await hRes.text(), 10);
+  const hash   = (await hashRes.text()).trim();
+  const block  = await (await fetch(`${MEMPOOL_API}/block/${hash}`)).json();
+  return { height, hash, time: block.timestamp };
+}
+
+// ─── Wallet connect ───────────────────────────────────────────────────────────
+
 async function connectWallet() {
-  // OPWallet injects window.opnet (similar to MetaMask's window.ethereum)
   if (!window.opnet) {
-    alert('OPWallet not found!\n\nInstall it from:\nhttps://chromewebstore.google.com/detail/opwallet/pmbjpcmaaladnfpacpmhmnfmpklgbdjb');
+    alert('OPWallet not detected!\n\nDownload from:\nhttps://github.com/btc-vision/opwallet/releases');
     return;
   }
+  const btn = document.getElementById('btnConnect');
+  btn.innerText = 'Connecting...';
+  btn.disabled = true;
   try {
-    // Request accounts from OPWallet
-    const accounts = await window.opnet.requestAccounts();
-    if (!accounts || accounts.length === 0) throw new Error('No accounts returned');
+    // Exact API from useBlockBet.ts
+    const [addresses, publicKey] = await Promise.all([
+      window.opnet.requestAccounts(),
+      window.opnet.getPublicKey(),
+    ]);
+    if (!addresses.length) throw new Error('No accounts returned');
+    const address = addresses[0];
+    const addressType =
+      address.startsWith('bc1p') || address.startsWith('bcrt1p') ? 'p2tr' :
+      address.startsWith('bc1q') || address.startsWith('bcrt1q') ? 'p2wpkh' : 'p2pkh';
 
-    walletAddress = accounts[0];
-    walletPubKey  = await window.opnet.getPublicKey();
-    walletConnected = true;
+    account = { address, publicKey, addressType };
+    opnetAddress = await pubkeyToOpnetAddress(publicKey);
 
-    // Update UI
-    const short = walletAddress.slice(0,8)+'...'+walletAddress.slice(-6);
+    const short = address.slice(0,8) + '...' + address.slice(-6);
     document.getElementById('walletAddr').innerText = short;
-    document.getElementById('btnConnect').innerText = short;
-    document.getElementById('btnConnect').classList.add('connected');
-    document.getElementById('btnConnect').onclick = null;
+    btn.innerText = short;
+    btn.classList.add('connected');
+    btn.onclick = null;
+    btn.disabled = false;
     document.getElementById('btnDisconnect').style.display = 'block';
 
     updateBetButtons();
-    await loadRoundData();
+    await refreshBetInfo();
 
-    // Poll every 30s (Bitcoin blocks ~10min)
-    setInterval(loadRoundData, 30000);
-
-    // Listen for wallet events
-    window.opnet.on('accountsChanged', (accs) => {
-      if (!accs || accs.length === 0) disconnectWallet();
-    });
-
+    window.opnet.on('disconnect', disconnectWallet);
   } catch(e) {
-    alert('Wallet connection failed: ' + e.message);
+    btn.innerText = 'Connect OPWallet';
+    btn.disabled = false;
+    alert('Connection failed: ' + e.message);
   }
 }
 
 function disconnectWallet() {
-  walletConnected = false;
-  walletAddress   = null;
-  walletPubKey    = null;
+  try { window.opnet?.disconnect?.(); } catch(e) {}
+  account = null; opnetAddress = null; betInfo = null; pendingWithdrawal = 0n;
 
-  document.getElementById('btnConnect').innerText = 'Connect OPWallet';
-  document.getElementById('btnConnect').classList.remove('connected');
-  document.getElementById('btnConnect').onclick = connectWallet;
+  const btn = document.getElementById('btnConnect');
+  btn.innerText = 'Connect OPWallet';
+  btn.classList.remove('connected');
+  btn.onclick = connectWallet;
+  btn.disabled = false;
   document.getElementById('btnDisconnect').style.display = 'none';
   document.getElementById('walletAddr').innerText = 'Not connected';
-  document.getElementById('betHint').innerText = 'Connect OPWallet to start betting';
-
+  document.getElementById('myBet').innerText = '—';
   hideAllActions();
   updateBetButtons();
 }
 
-// ─── OP_NET RPC calls ─────────────────────────────────────────────────────────
+// ─── Data refresh ─────────────────────────────────────────────────────────────
 
-/**
- * Low-level call to OP_NET JSON-RPC endpoint.
- * Equivalent to calling a view function on the contract.
- */
-async function opnetCall(method, contractAddr, calldata) {
-  const body = {
-    jsonrpc: '2.0', id: 1, method: 'eth_call',
-    params: [{
-      to: contractAddr,
-      data: calldata,
-    }, 'latest']
-  };
-  const res = await fetch(RPC_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  });
-  const json = await res.json();
-  if (json.error) throw new Error(json.error.message);
-  return json.result;
-}
-
-/**
- * Encode a function selector (first 4 bytes of keccak256 of signature).
- * We use a simple manual approach since we can't import keccak256 in browser.
- * The selectors match exactly what's in the AssemblyScript contract's encodeSelector().
- */
-function selector(sig) {
-  // Pre-computed selectors matching encodeSelector() in OP_NET runtime
-  const selectors = {
-    'getRoundInfo()':              '0x8c65c81f',
-    'getBetInfo(address)':         '0x7941b2e2',
-    'getPendingWithdrawal(address)':'0xd4bc00b7',
-    'bet(bool,uint64)':            '0x8b5d4e3a',
-    'settle()':                    '0x8866488a',
-    'claim()':                     '0x4e71d92d',
-    'withdraw()':                  '0x3ccfd60b',
-    'startNewRound()':             '0x98ef6e2c',
-  };
-  return selectors[sig] || null;
-}
-
-// ─── Load round data ──────────────────────────────────────────────────────────
-async function loadRoundData() {
+async function refreshRoundInfo() {
   try {
-    // Call getRoundInfo() on the contract
-    const data = selector('getRoundInfo()');
-    const result = await opnetCall('getRoundInfo', CONTRACT_ADDRESS, data);
-
-    if (!result || result === '0x') {
-      showStatus('No round data — contract not deployed?', 'open');
-      return;
-    }
-
-    // Decode: roundId(u256), targetBlock(u256), evenPool(u256), oddPool(u256),
-    //         settled(bool), winnerSide(u256), currentBlock(u256), winningBlock(u256)
-    const hex = result.startsWith('0x') ? result.slice(2) : result;
-    roundData.roundId      = parseInt(hex.slice(0, 64), 16);
-    roundData.targetBlock  = parseInt(hex.slice(64, 128), 16);
-    roundData.evenPool     = parseInt(hex.slice(128, 192), 16);
-    roundData.oddPool      = parseInt(hex.slice(192, 256), 16);
-    roundData.settled      = parseInt(hex.slice(256, 320), 16) !== 0;
-    roundData.winnerSide   = parseInt(hex.slice(320, 384), 16);
-    roundData.currentBlock = parseInt(hex.slice(384, 448), 16);
-    roundData.winningBlock = parseInt(hex.slice(448, 512), 16);
-
+    const res = await contractRead(SELECTORS.getRoundInfo);
+    if (!res.data || res.data.length < 16) { showMockRoundUI(); return; }
+    roundInfo = decodeRoundInfo(res.data);
     updateRoundUI();
-
-    if (walletConnected && walletAddress) {
-      await loadMyBetData();
-    }
   } catch(e) {
-    console.warn('loadRoundData error:', e.message);
-    // Show mock data if contract not yet deployed
+    console.warn('refreshRoundInfo:', e.message);
     showMockRoundUI();
   }
 }
 
+async function refreshBetInfo() {
+  if (!opnetAddress) return;
+  try {
+    const addrArg = encodeOpnetAddress(opnetAddress);
+    const [betRes, wdRes] = await Promise.all([
+      contractRead(SELECTORS.getBetInfo,           [addrArg]),
+      contractRead(SELECTORS.getPendingWithdrawal, [addrArg]),
+    ]);
+    betInfo = decodeBetInfo(betRes.data);
+    pendingWithdrawal = decodePendingWithdrawal(wdRes.data);
+
+    const total = betInfo.evenBet + betInfo.oddBet;
+    if (total > 0n) {
+      const side = betInfo.evenBet > 0n ? '🟢 EVEN' : '🔴 ODD';
+      document.getElementById('myBet').innerText =
+        `${Number(total).toLocaleString()} sats (${side})`;
+    } else {
+      document.getElementById('myBet').innerText = '—';
+    }
+    updateActionButtons();
+    updateBetButtons();
+  } catch(e) {
+    console.warn('refreshBetInfo:', e.message);
+  }
+}
+
+async function refreshChainTip() {
+  try {
+    chainTip = await fetchChainTip();
+    document.getElementById('currentBlock').innerText = chainTip.height.toLocaleString();
+
+    const elapsed = Math.floor(Date.now() / 1000) - chainTip.time;
+    secondsToBlock = Math.max(0, AVG_BLOCK_SECS - elapsed);
+
+    if (countdownInterval) clearInterval(countdownInterval);
+    countdownInterval = setInterval(() => {
+      secondsToBlock = Math.max(0, secondsToBlock - 1);
+    }, 1000);
+
+    // Update round status if tip changed
+    if (roundInfo) updateRoundUI();
+  } catch(e) {
+    console.warn('refreshChainTip:', e.message);
+  }
+}
+
+// ─── UI: round display ────────────────────────────────────────────────────────
+
 function showMockRoundUI() {
-  document.getElementById('roundId').innerText = '#1';
-  document.getElementById('targetBlock').innerText = '895,124';
-  document.getElementById('currentBlock').innerText = '895,123';
+  document.getElementById('roundId').innerText = '—';
+  document.getElementById('targetBlock').innerText = '—';
+  document.getElementById('winningBlock').innerText = '—';
   document.getElementById('evenPool').innerText = '0';
-  document.getElementById('oddPool').innerText = '0';
-  setStatus('OPEN', 'open');
+  document.getElementById('oddPool').innerText  = '0';
+  document.getElementById('poolPct').innerText  = '50%';
+  document.getElementById('poolBar').style.width = '50%';
+  setStatus('CONNECTING', 'pending');
 }
 
 function updateRoundUI() {
-  document.getElementById('roundId').innerText = '#' + roundData.roundId;
-  document.getElementById('targetBlock').innerText = roundData.targetBlock.toLocaleString();
-  document.getElementById('currentBlock').innerText = roundData.currentBlock.toLocaleString();
-  document.getElementById('winningBlock').innerText =
-    roundData.winningBlock > 0 ? roundData.winningBlock.toLocaleString() : '—';
+  if (!roundInfo) { showMockRoundUI(); return; }
 
-  const evenSats = roundData.evenPool;
-  const oddSats  = roundData.oddPool;
+  document.getElementById('roundId').innerText = '#' + roundInfo.roundId.toString();
+  document.getElementById('targetBlock').innerText = Number(roundInfo.targetBlock).toLocaleString();
+  document.getElementById('currentBlock').innerText =
+    chainTip ? chainTip.height.toLocaleString() : Number(roundInfo.currentBlock).toLocaleString();
+  document.getElementById('winningBlock').innerText =
+    roundInfo.winningBlock > 0n ? Number(roundInfo.winningBlock).toLocaleString() : '—';
+
+  const evenSats = Number(roundInfo.evenPool);
+  const oddSats  = Number(roundInfo.oddPool);
   document.getElementById('evenPool').innerText = evenSats.toLocaleString();
   document.getElementById('oddPool').innerText  = oddSats.toLocaleString();
 
   const total = evenSats + oddSats;
   const pct   = total > 0 ? (evenSats / total * 100).toFixed(1) : 50;
-  document.getElementById('poolPct').innerText       = pct + '%';
-  document.getElementById('poolBar').style.width      = pct + '%';
+  document.getElementById('poolPct').innerText      = pct + '%';
+  document.getElementById('poolBar').style.width    = pct + '%';
 
-  const banner = document.getElementById('resultBanner');
+  const banner  = document.getElementById('resultBanner');
+  const curBlock = chainTip ? chainTip.height : Number(roundInfo.currentBlock);
+
   hideAllActions();
 
-  if (roundData.settled) {
-    const isEvenWon = roundData.winnerSide === 1;
+  if (roundInfo.settled) {
+    const isEvenWon = roundInfo.winnerSide === 1;
     setStatus('SETTLED', 'settled');
     banner.className = 'result-banner show ' + (isEvenWon ? 'even-won' : 'odd-won');
-    banner.innerHTML = isEvenWon ? '🟢 EVEN WON!' : '🔴 ODD WON!';
-    // Show block hash if available
+    banner.innerHTML = isEvenWon
+      ? '🟢 EVEN WON! · Last nibble was even'
+      : '🔴 ODD WON! · Last nibble was odd';
     updateHashViz(isEvenWon);
-    // Show new round button
     showAction('btnNewRound');
-  } else if (roundData.currentBlock >= roundData.targetBlock && roundData.targetBlock > 0) {
+  } else if (curBlock >= Number(roundInfo.targetBlock) && Number(roundInfo.targetBlock) > 0) {
     setStatus('PENDING', 'pending');
     banner.className = 'result-banner';
     showAction('btnSettle');
@@ -540,268 +693,215 @@ function updateRoundUI() {
     banner.className = 'result-banner';
   }
 
+  updateActionButtons();
   updateBetButtons();
 }
 
-async function loadMyBetData() {
-  try {
-    // Encode getBetInfo(address) call
-    const sel = selector('getBetInfo(address)');
-    // Encode address as 32-byte padded hex
-    const addrHex = walletAddress.replace('0x','').padStart(64, '0');
-    const calldata = sel + addrHex;
+function updateActionButtons() {
+  if (!roundInfo || !betInfo) return;
+  if (!roundInfo.settled) return;
 
-    const result = await opnetCall('getBetInfo', CONTRACT_ADDRESS, calldata);
-    if (!result || result === '0x') return;
+  const iWon = (roundInfo.winnerSide === 1 && betInfo.evenBet > 0n) ||
+               (roundInfo.winnerSide === 2 && betInfo.oddBet  > 0n);
+  const totalBet = betInfo.evenBet + betInfo.oddBet;
 
-    const hex = result.startsWith('0x') ? result.slice(2) : result;
-    myBetData.evenBet = parseInt(hex.slice(0, 64), 16);
-    myBetData.oddBet  = parseInt(hex.slice(64, 128), 16);
-    myBetData.claimed = parseInt(hex.slice(128, 130), 16) !== 0;
-
-    const totalBet = myBetData.evenBet + myBetData.oddBet;
-    if (totalBet > 0) {
-      const side = myBetData.evenBet > 0 ? '🟢 EVEN' : '🔴 ODD';
-      document.getElementById('myBet').innerText = `${totalBet.toLocaleString()} sats (${side})`;
-    } else {
-      document.getElementById('myBet').innerText = '—';
-    }
-
-    // Load pending withdrawal
-    const selW = selector('getPendingWithdrawal(address)');
-    const resultW = await opnetCall('getPendingWithdrawal', CONTRACT_ADDRESS, selW + addrHex);
-    if (resultW && resultW !== '0x') {
-      const hexW = resultW.startsWith('0x') ? resultW.slice(2) : resultW;
-      pendingWithdrawal = parseInt(hexW.slice(0, 64), 16);
-    }
-
-    // Update action buttons based on state
-    if (roundData.settled) {
-      const iWon = (roundData.winnerSide === 1 && myBetData.evenBet > 0) ||
-                   (roundData.winnerSide === 2 && myBetData.oddBet > 0);
-      if (iWon && !myBetData.claimed && totalBet > 0) {
-        showAction('btnClaim');
-      }
-      if (pendingWithdrawal > 0) {
-        showAction('btnWithdraw');
-      }
-    }
-
-    updateBetButtons();
-  } catch(e) {
-    console.warn('loadMyBetData error:', e.message);
+  if (iWon && !betInfo.claimed && totalBet > 0n) {
+    showAction('btnClaim');
+  }
+  if (pendingWithdrawal > 0n) {
+    const btn = document.getElementById('btnWithdraw');
+    btn.innerText = `⬇ Withdraw ${satsToBtc(pendingWithdrawal)} BTC`;
+    showAction('btnWithdraw');
   }
 }
 
-// ─── Transactions via OPWallet ────────────────────────────────────────────────
+function updateBetButtons() {
+  const curBlock = chainTip ? chainTip.height : (roundInfo ? Number(roundInfo.currentBlock) : 0);
+  const targetBlock = roundInfo ? Number(roundInfo.targetBlock) : 0;
+  const canBet = account && roundInfo &&
+    !roundInfo.settled &&
+    curBlock < targetBlock &&
+    betInfo && betInfo.evenBet === 0n && betInfo.oddBet === 0n &&
+    !isBetting;
+
+  document.getElementById('btnEven').disabled = !canBet;
+  document.getElementById('btnOdd').disabled  = !canBet;
+
+  const hint = document.getElementById('betHint');
+  if (!account) {
+    hint.innerText = 'Connect OPWallet to start betting';
+    hint.style.color = 'var(--text-muted)';
+  } else if (!roundInfo) {
+    hint.innerText = '⏳ Loading contract state...';
+    hint.style.color = 'var(--text-muted)';
+  } else if (roundInfo.settled) {
+    hint.innerText = 'Round settled — start a new round to bet';
+    hint.style.color = 'var(--text-muted)';
+  } else if (betInfo && (betInfo.evenBet > 0n || betInfo.oddBet > 0n)) {
+    hint.innerText = '✓ Bet placed — awaiting target block ~' + targetBlock.toLocaleString();
+    hint.style.color = 'var(--even)';
+  } else if (curBlock >= targetBlock && targetBlock > 0) {
+    hint.innerText = '⛏ Target block mined — settle to reveal result!';
+    hint.style.color = 'var(--btc)';
+  } else {
+    hint.innerText = `Min bet: ${MIN_BET_SATS.toLocaleString()} sats (0.0001 BTC)`;
+    hint.style.color = 'var(--text-muted)';
+  }
+}
+
+// ─── Bet placement ────────────────────────────────────────────────────────────
 
 async function placeBet(isEven) {
-  if (!walletConnected) { alert('Connect OPWallet first'); return; }
+  if (!account) { alert('Connect OPWallet first'); return; }
   const sats = parseInt(document.getElementById('betAmount').value);
   if (!sats || sats < MIN_BET_SATS) {
-    alert(`Minimum bet is ${MIN_BET_SATS.toLocaleString()} satoshis`);
-    return;
+    alert(`Minimum bet: ${MIN_BET_SATS.toLocaleString()} sats`); return;
   }
-
-  disableBetButtons();
-  document.getElementById('betHint').innerText = '⏳ Sending transaction...';
-
+  isBetting = true;
+  updateBetButtons();
+  const hint = document.getElementById('betHint');
+  hint.innerText = '⏳ Confirm transaction in OPWallet...';
+  hint.style.color = 'var(--btc)';
   try {
-    // Encode: selector + bool(isEven) + uint64(sats)
-    const sel    = selector('bet(bool,uint64)');
-    const boolHex = isEven ? '01' : '00';
-    const satsHex = sats.toString(16).padStart(16, '0');
-    const calldata = sel + boolHex.padStart(64,'0') + satsHex.padStart(64,'0');
-
-    // Send transaction via OPWallet
-    const txResult = await window.opnet.sendTransaction({
-      to: CONTRACT_ADDRESS,
-      data: calldata,
-      satoshis: sats, // BTC amount to send
-      network: NETWORK,
-    });
-
-    document.getElementById('betHint').innerText =
-      `✓ Bet placed! TX: ${txResult.txId ? txResult.txId.slice(0,16)+'...' : 'pending'}`;
-    document.getElementById('betHint').style.color = 'var(--even)';
-
-    setTimeout(loadRoundData, 5000);
+    const result = await contractCall(
+      SELECTORS.bet,
+      [encodeBool(isEven), encodeU64(sats)],
+      sats,
+    );
+    const txid = result?.txid || result?.txId || '';
+    hint.innerText = '✓ TX broadcast' + (txid ? ': ' + txid.slice(0,16)+'...' : '!');
+    hint.style.color = 'var(--even)';
+    setTimeout(() => { refreshRoundInfo(); refreshBetInfo(); }, 4000);
   } catch(e) {
-    document.getElementById('betHint').innerText = '❌ ' + (e.message || 'Transaction failed');
-    document.getElementById('betHint').style.color = 'var(--odd)';
+    hint.innerText = '❌ ' + (e.message || 'Transaction failed');
+    hint.style.color = 'var(--odd)';
+  } finally {
+    isBetting = false;
     updateBetButtons();
   }
 }
 
+// ─── Contract actions ─────────────────────────────────────────────────────────
+
 async function settleRound() {
-  if (!walletConnected) { alert('Connect OPWallet first'); return; }
-  document.getElementById('btnSettle').disabled = true;
-  document.getElementById('btnSettle').innerText = '⏳ Settling...';
+  if (!account) { alert('Connect OPWallet first'); return; }
+  const btn = document.getElementById('btnSettle');
+  btn.disabled = true; btn.innerText = '⏳ Settling...';
   try {
-    await window.opnet.sendTransaction({
-      to: CONTRACT_ADDRESS,
-      data: selector('settle()'),
-      satoshis: 0,
-      network: NETWORK,
-    });
-    setTimeout(loadRoundData, 5000);
+    await contractCall(SELECTORS.settle, [], 0);
+    setTimeout(refreshRoundInfo, 5000);
   } catch(e) {
     alert('Settle failed: ' + e.message);
-    document.getElementById('btnSettle').disabled = false;
-    document.getElementById('btnSettle').innerText = '⛏ Settle Round';
+    btn.disabled = false; btn.innerText = '⛏ Settle Round';
   }
 }
 
 async function claimWinnings() {
-  if (!walletConnected) { alert('Connect OPWallet first'); return; }
-  document.getElementById('btnClaim').disabled = true;
-  document.getElementById('btnClaim').innerText = '⏳ Claiming...';
+  if (!account) { alert('Connect OPWallet first'); return; }
+  const btn = document.getElementById('btnClaim');
+  btn.disabled = true; btn.innerText = '⏳ Claiming...';
   try {
-    await window.opnet.sendTransaction({
-      to: CONTRACT_ADDRESS,
-      data: selector('claim()'),
-      satoshis: 0,
-      network: NETWORK,
-    });
-    const payout = document.getElementById('payoutBanner');
-    payout.className = 'payout-banner win show';
-    payout.innerHTML = '🏆 Claimed! Now press Withdraw to receive BTC';
+    await contractCall(SELECTORS.claim, [], 0);
+    const pb = document.getElementById('payoutBanner');
+    pb.className = 'payout-banner win show';
+    pb.innerHTML = '🏆 Claimed! Press Withdraw to receive BTC on-chain';
     hideAction('btnClaim');
-    showAction('btnWithdraw');
-    setTimeout(loadMyBetData, 5000);
+    setTimeout(() => { refreshRoundInfo(); refreshBetInfo(); }, 5000);
   } catch(e) {
     alert('Claim failed: ' + e.message);
-    document.getElementById('btnClaim').disabled = false;
-    document.getElementById('btnClaim').innerText = '🏆 Claim Winnings';
+    btn.disabled = false; btn.innerText = '🏆 Claim Winnings';
   }
 }
 
 async function withdrawBTC() {
-  if (!walletConnected) { alert('Connect OPWallet first'); return; }
-  document.getElementById('btnWithdraw').disabled = true;
-  document.getElementById('btnWithdraw').innerText = '⏳ Withdrawing...';
+  if (!account) { alert('Connect OPWallet first'); return; }
+  const btn = document.getElementById('btnWithdraw');
+  btn.disabled = true; btn.innerText = '⏳ Withdrawing...';
   try {
-    await window.opnet.sendTransaction({
-      to: CONTRACT_ADDRESS,
-      data: selector('withdraw()'),
-      satoshis: 0,
-      network: NETWORK,
-    });
-    const payout = document.getElementById('payoutBanner');
-    payout.className = 'payout-banner win show';
-    payout.innerHTML = `💰 Withdrawn ${pendingWithdrawal.toLocaleString()} sats to your wallet!`;
+    await contractCall(SELECTORS.withdraw, [], 0);
+    const pb = document.getElementById('payoutBanner');
+    pb.className = 'payout-banner win show';
+    pb.innerHTML = `💰 Withdrawal initiated! ${satsToBtc(pendingWithdrawal)} BTC → your wallet`;
+    pendingWithdrawal = 0n;
     hideAction('btnWithdraw');
-    setTimeout(loadMyBetData, 5000);
+    setTimeout(refreshBetInfo, 5000);
   } catch(e) {
     alert('Withdraw failed: ' + e.message);
-    document.getElementById('btnWithdraw').disabled = false;
-    document.getElementById('btnWithdraw').innerText = '⬇ Withdraw BTC to wallet';
+    btn.disabled = false;
   }
 }
 
 async function startNewRound() {
-  if (!walletConnected) { alert('Connect OPWallet first'); return; }
+  if (!account) { alert('Connect OPWallet first'); return; }
+  const btn = document.getElementById('btnNewRound');
+  btn.disabled = true; btn.innerText = '⏳ Starting...';
   try {
-    await window.opnet.sendTransaction({
-      to: CONTRACT_ADDRESS,
-      data: selector('startNewRound()'),
-      satoshis: 0,
-      network: NETWORK,
-    });
+    await contractCall(SELECTORS.startNewRound, [], 0);
     document.getElementById('payoutBanner').className = 'payout-banner';
     document.getElementById('resultBanner').className = 'result-banner';
+    document.getElementById('hashViz').style.display  = 'none';
+    betInfo = null; pendingWithdrawal = 0n;
+    document.getElementById('myBet').innerText = '—';
     hideAllActions();
-    setTimeout(loadRoundData, 5000);
+    setTimeout(refreshRoundInfo, 5000);
   } catch(e) {
-    alert('Start new round failed: ' + e.message);
+    alert('Failed: ' + e.message);
+    btn.disabled = false; btn.innerText = '▶ Start New Round';
   }
 }
 
 // ─── UI helpers ───────────────────────────────────────────────────────────────
+
 function setStatus(text, type) {
   const el = document.getElementById('roundStatus');
   el.innerText = text;
   el.className = 'status-pill status-' + type;
 }
-
-function updateBetButtons() {
-  const canBet = walletConnected &&
-    !roundData.settled &&
-    roundData.currentBlock < roundData.targetBlock &&
-    myBetData.evenBet === 0 && myBetData.oddBet === 0;
-
-  document.getElementById('btnEven').disabled = !canBet;
-  document.getElementById('btnOdd').disabled  = !canBet;
-
-  if (!walletConnected) {
-    document.getElementById('betHint').innerText = 'Connect OPWallet to start betting';
-  } else if (roundData.settled) {
-    document.getElementById('betHint').innerText = 'Round settled — start a new round to bet';
-  } else if (myBetData.evenBet > 0 || myBetData.oddBet > 0) {
-    document.getElementById('betHint').innerText = '✓ Bet placed — awaiting settlement';
-    document.getElementById('betHint').style.color = 'var(--even)';
-  } else if (roundData.currentBlock >= roundData.targetBlock && roundData.targetBlock > 0) {
-    document.getElementById('betHint').innerText = 'Target block mined — settle to reveal result';
-  } else {
-    document.getElementById('betHint').innerText = 'Min bet: 10,000 sats (0.0001 BTC)';
-    document.getElementById('betHint').style.color = 'var(--text-muted)';
-  }
+function showAction(id) {
+  const el = document.getElementById(id);
+  if (el) { el.style.display = 'block'; el.disabled = false; }
 }
-
-function disableBetButtons() {
-  document.getElementById('btnEven').disabled = true;
-  document.getElementById('btnOdd').disabled  = true;
+function hideAction(id) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = 'none';
 }
-
-function showAction(id)  { document.getElementById(id).style.display = 'block'; }
-function hideAction(id)  { document.getElementById(id).style.display = 'none'; }
 function hideAllActions() {
   ['btnSettle','btnClaim','btnWithdraw','btnNewRound'].forEach(hideAction);
   document.getElementById('payoutBanner').className = 'payout-banner';
 }
-
 function updateHashViz(isEven) {
-  // Show a representative block hash with last nibble highlighted
-  const section = document.getElementById('hashViz');
-  const display = document.getElementById('hashDisplay');
-  const parity  = document.getElementById('hashParity');
-
-  section.style.display = 'block';
-  // Show placeholder hash (real hash fetched from API)
-  const fakeHash = '000000000000000000024b5f8e3da7c2f1a9b04e63d8f21795c0eab6d3...';
-  display.innerHTML = `<span style="color:var(--text-muted)">${fakeHash.slice(0,62)}</span><span class="hash-last">${isEven ? 'e' : 'f'}</span>`;
-  parity.innerHTML = `<span class="parity-val ${isEven ? 'even' : 'odd'}">${isEven ? '🟢 EVEN (last nibble: e = 14)' : '🔴 ODD (last nibble: f = 15)'}</span>`;
+  document.getElementById('hashViz').style.display = 'block';
+  document.getElementById('hashDisplay').innerHTML =
+    `<span style="color:var(--text-muted)">000000000000000000024b5f8e3da7c2f1a9</span>` +
+    `<span class="hash-last" style="color:var(--btc)">${isEven ? '4' : '7'}</span>`;
+  document.getElementById('hashParity').innerHTML =
+    `<span class="parity-val ${isEven ? 'even' : 'odd'}">${isEven ? '🟢 EVEN (nibble = 4)' : '🔴 ODD (nibble = 7)'}</span>`;
 }
 
 // ─── BTC price WebSocket ──────────────────────────────────────────────────────
+
 function startPriceWS() {
   const ws = new WebSocket('wss://stream.binance.com:9443/stream?streams=btcusdt@ticker');
-  ws.onmessage = (event) => {
-    const msg = JSON.parse(event.data);
-    const t = msg.data;
+  ws.onmessage = (e) => {
+    const t = JSON.parse(e.data).data;
     if (!t) return;
     const price  = parseFloat(t.c);
     const change = parseFloat(t.P);
-    const fmt    = Math.round(price).toLocaleString();
-    const changeStr = (change >= 0 ? '+' : '') + change.toFixed(2) + '%';
-    document.getElementById('chartPrice').innerText = '$' + fmt;
-    const changeEl = document.getElementById('chartChange');
-    changeEl.innerText = changeStr;
-    changeEl.className = 'chart-change ' + (change >= 0 ? 'pos' : 'neg');
+    document.getElementById('chartPrice').innerText = '$' + Math.round(price).toLocaleString();
+    const el = document.getElementById('chartChange');
+    el.innerText = (change >= 0 ? '+' : '') + change.toFixed(2) + '%';
+    el.className = 'chart-change ' + (change >= 0 ? 'pos' : 'neg');
   };
   ws.onclose = () => setTimeout(startPriceWS, 3000);
   ws.onerror = () => ws.close();
 }
 
-// ─── TradingView chart ────────────────────────────────────────────────────────
+// ─── TradingView ──────────────────────────────────────────────────────────────
+
 new TradingView.widget({
-  container_id: 'tv_chart',
-  symbol: 'BINANCE:BTCUSDT',
-  interval: '1',
-  theme: 'dark',
-  width: '100%', height: '100%', autosize: true,
-  hide_side_toolbar: true,
-  allow_symbol_change: false,
+  container_id: 'tv_chart', symbol: 'BINANCE:BTCUSDT', interval: '1',
+  theme: 'dark', width: '100%', height: '100%', autosize: true,
+  hide_side_toolbar: true, allow_symbol_change: false,
   toolbar_bg: '#0a0a0a',
   overrides: {
     "paneProperties.background":               "#0a0d0a",
@@ -810,14 +910,53 @@ new TradingView.widget({
     "paneProperties.horzGridProperties.color": "rgba(247,147,26,0.04)",
     "scalesProperties.textColor":              "#666666",
     "scalesProperties.backgroundColor":        "#0a0a0a",
-    "scalesProperties.lineColor":              "#2a2a2a",
   },
   loading_screen: { backgroundColor: "#0a0d0a", foregroundColor: "#f7931a" },
 });
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
+
 startPriceWS();
 showMockRoundUI();
+
+// Load contract + chain data immediately (no wallet needed for reads)
+refreshChainTip();
+refreshRoundInfo();
+
+// Auto-refresh
+setInterval(refreshRoundInfo, 15000);
+setInterval(refreshChainTip,  30000);
+
+// Restore existing OPWallet session on page load
+window.addEventListener('load', () => {
+  if (!window.opnet) return;
+  window.opnet.getAccounts().then(async (addresses) => {
+    if (!addresses?.length) return;
+    try {
+      const publicKey   = await window.opnet.getPublicKey();
+      const address     = addresses[0];
+      const addressType =
+        address.startsWith('bc1p') || address.startsWith('bcrt1p') ? 'p2tr' :
+        address.startsWith('bc1q') || address.startsWith('bcrt1q') ? 'p2wpkh' : 'p2pkh';
+      account      = { address, publicKey, addressType };
+      opnetAddress = await pubkeyToOpnetAddress(publicKey);
+
+      const short = address.slice(0,8) + '...' + address.slice(-6);
+      document.getElementById('walletAddr').innerText = short;
+      const btn = document.getElementById('btnConnect');
+      btn.innerText = short;
+      btn.classList.add('connected');
+      btn.onclick = null;
+      document.getElementById('btnDisconnect').style.display = 'block';
+
+      updateBetButtons();
+      await refreshBetInfo();
+
+      window.opnet.on('disconnect', disconnectWallet);
+    } catch(e) { console.warn('Session restore:', e.message); }
+  }).catch(() => {});
+});
+
 
 // ─── Graffiti background ──────────────────────────────────────────────────────
 (function() {
