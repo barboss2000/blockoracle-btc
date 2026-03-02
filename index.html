@@ -259,8 +259,25 @@ body{background:var(--bg);color:var(--text);font-family:'DM Mono',monospace;font
 
 <!-- Status bar -->
 <div class="sbar warn" id="sbar">
-  <span>📡 Connecting to OP_NET Regtest...</span>
+  <span>&#x1F4E1; Connecting to OP_NET Regtest...</span>
   <code>opr1sqrl...p8vpx</code>
+  <button onclick="showSettings()" style="margin-left:auto;background:transparent;border:1px solid rgba(247,147,26,0.4);color:var(--btc);padding:2px 8px;border-radius:4px;font-size:10px;cursor:pointer;font-family:inherit">&#x2699; Settings</button>
+</div>
+
+<!-- Settings modal -->
+<div id="settingsModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;align-items:center;justify-content:center;">
+  <div style="background:#111;border:1px solid #333;border-radius:12px;padding:24px;width:480px;max-width:95vw;font-family:monospace;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <span style="font-weight:800;font-size:16px;color:var(--btc);">Settings</span>
+      <button onclick="hideSettings()" style="background:transparent;border:none;color:#666;font-size:20px;cursor:pointer;">&#x2715;</button>
+    </div>
+    <label style="font-size:10px;color:#666;letter-spacing:1px;text-transform:uppercase;">Contract Address (opr1...)</label>
+    <input id="inputContract" style="width:100%;background:#0a0a0a;border:1px solid #333;border-radius:6px;padding:8px 10px;font-size:11px;color:#fff;margin:6px 0 14px;outline:none;box-sizing:border-box;" placeholder="opr1..."/>
+    <label style="font-size:10px;color:#666;letter-spacing:1px;text-transform:uppercase;">RPC URL</label>
+    <input id="inputRpc" style="width:100%;background:#0a0a0a;border:1px solid #333;border-radius:6px;padding:8px 10px;font-size:11px;color:#fff;margin:6px 0 4px;outline:none;box-sizing:border-box;" placeholder="https://regtest.opnet.org/api/v1/json-rpc"/>
+    <div style="font-size:10px;color:#555;margin-bottom:16px;">Variants: https://regtest.opnet.org/api/v1/json-rpc &nbsp;|&nbsp; http://localhost:3000/api/v1/json-rpc</div>
+    <button onclick="applySettings()" style="width:100%;background:var(--btc);color:#000;border:none;padding:10px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">Apply &amp; Reload</button>
+  </div>
 </div>
 
 <!-- Body -->
@@ -416,12 +433,18 @@ body{background:var(--bg);color:var(--text);font-family:'DM Mono',monospace;font
 <script>
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const CONTRACT = 'opr1sqrlcf8xrc23pjasncl97yq3sh39xp3xs3u7p8vpx';
+// Runtime override: if user changes contract via Settings, this returns new value
+function getContract() { return window._contractOverride || CONTRACT; }
 // bcrt1 equivalent (same witness program, different HRP)
 const CONTRACT_BCRT = 'bcrt1sqrlcf8xrc23pjasncl97yq3sh39xp3xs3uwkjl8f';
+// RPC endpoints — first working one is used automatically
+// Edit RPC directly in the UI (gear icon) or change here
 const RPC_URLS = [
   'https://regtest.opnet.org/api/v1/json-rpc',
   'https://regtest.opnet.org/json-rpc',
-  'https://regtest.opnet.org/',
+  'http://localhost:3000/api/v1/json-rpc',
+  'http://localhost:9001/api/v1/json-rpc',
+  'http://127.0.0.1:3000/api/v1/json-rpc',
 ];
 const MIN_SATS = 10000;
 
@@ -509,9 +532,9 @@ const decPending = h => new D(h).u256();
 async function rpcRead(sig, args = [], from = null) {
   const cd  = mkCall(sig, ...args);
   // Try both opr1 and bcrt1 forms of the contract address
-  const baseAddr = window._contractOverride || CONTRACT;
-  const addrs = baseAddr === CONTRACT
-    ? [CONTRACT, CONTRACT_BCRT]
+  const baseAddr = window._contractOverride || getContract();
+  const addrs = baseAddr === getContract()
+    ? [getContract(), CONTRACT_BCRT]
     : [baseAddr];
   const frm = from || wallet?.address || null;
   // Build all param combinations: [addr, calldata, from?] × [opr1, bcrt1]
@@ -565,7 +588,7 @@ async function rpcWrite(sig, args = [], sats = 0) {
   const opw = getOPWallet();
   if (!opw) throw new Error('OPWallet not found');
   return opw.signAndBroadcastInteraction({
-    to: CONTRACT, calldata: mkCall(sig, ...args), value: sats,
+    to: getContract(), calldata: mkCall(sig, ...args), value: sats,
   });
 }
 
@@ -660,14 +683,14 @@ async function refreshRound() {
       show('btnNew');
       document.getElementById('btnNew').innerText = '▶ Start First Round (Initialize)';
       showDiag(
-        'Contract: ' + CONTRACT + '\n\n' +
+        'Contract: ' + getContract() + '\n\n' +
         'Response empty — contract may need initialization.\n' +
         'Try clicking "Start First Round" above.\n\n' +
         'Or test in browser console (F12):\n' +
         'fetch("https://regtest.opnet.org/api/v1/json-rpc",{method:"POST",' +
         'headers:{"Content-Type":"application/json"},' +
         'body:JSON.stringify({jsonrpc:"2.0",id:1,method:"btc_call",' +
-        'params:["' + CONTRACT + '","5a699467"]})})' +
+        'params:["' + getContract() + '","5a699467"]})})' +
         '.then(r=>r.json()).then(j=>console.log(JSON.stringify(j)))'
       );
       return;
@@ -689,7 +712,7 @@ async function verifyContract() {
     const r = await fetch('https://regtest.opnet.org/api/v1/json-rpc', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({jsonrpc:'2.0',id:1,method:'btc_getCode',params:[CONTRACT]}),
+      body: JSON.stringify({jsonrpc:'2.0',id:1,method:'btc_getCode',params:[getContract()]}),
       signal: AbortSignal.timeout(6000),
     });
     if (r.ok) {
@@ -717,11 +740,11 @@ function showDiag(msg) {
   }
   el.innerHTML = '⚠️ <strong>Contract Debug Info:</strong>\n' + msg +
     '\n\n<strong>What to do:</strong>\n' +
-    '→ Run: <code style="color:var(--btc)">opnet contract:get ' + CONTRACT + ' --network regtest</code>\n' +
+    '→ Run: <code style="color:var(--btc)">opnet contract:get ' + getContract() + ' --network regtest</code>\n' +
     '→ Or paste correct contract address below:\n' +
     '<input id="contractInput" placeholder="opr1..." style="width:100%;background:#111;border:1px solid #333;' +
     'border-radius:4px;padding:4px 8px;color:#fff;font-family:DM Mono,monospace;font-size:10px;margin-top:4px;" ' +
-    'value="' + CONTRACT + '"/>\n' +
+    'value="' + getContract() + '"/>\n' +
     '<button onclick="updateContract()" style="margin-top:4px;padding:3px 10px;background:var(--btc);' +
     'color:#000;border:none;border-radius:4px;cursor:pointer;font-size:10px;">Update & Retry</button>';
 }
@@ -735,7 +758,7 @@ function updateContract() {
   const val = document.getElementById('contractInput')?.value?.trim();
   if (val && val.length > 10) {
     workingRpc = null;
-    // Dynamically update CONTRACT
+    // Dynamically update getContract()
     window._contractOverride = val;
     console.log('[BlockBet] Contract updated to:', val);
     hideDiag();
@@ -1009,6 +1032,37 @@ new TradingView.widget({
     "scalesProperties.textColor": "#555", "scalesProperties.backgroundColor": "#050505",
   },
   loading_screen: { backgroundColor: "#080d08", foregroundColor: "#f7931a" },
+});
+
+// ─── SETTINGS ────────────────────────────────────────────────────────────────
+function showSettings() {
+  const m = document.getElementById('settingsModal');
+  document.getElementById('inputContract').value = window._contractOverride || getContract();
+  document.getElementById('inputRpc').value = workingRpc || RPC_URLS[0];
+  m.style.display = 'flex';
+}
+function hideSettings() {
+  document.getElementById('settingsModal').style.display = 'none';
+}
+function applySettings() {
+  const newContract = document.getElementById('inputContract').value.trim();
+  const newRpc      = document.getElementById('inputRpc').value.trim();
+  if (newContract && newContract.startsWith('opr1')) {
+    window._contractOverride = newContract;
+    // Patch getContract() variable at runtime
+    window.__CONTRACT = newContract;
+  }
+  if (newRpc) {
+    workingRpc = newRpc;
+    RPC_URLS.unshift(newRpc);
+  }
+  hideSettings();
+  round = null; myBet = null;
+  refreshRound();
+}
+// Allow clicking outside modal to close
+document.getElementById('settingsModal').addEventListener('click', function(e) {
+  if (e.target === this) hideSettings();
 });
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
