@@ -260,7 +260,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Mono',monospace;font
 <!-- Status bar -->
 <div class="sbar warn" id="sbar">
   <span>📡 Connecting to OP_NET Regtest...</span>
-  <code>opr1sqp6...d5dlf</code>
+  <code>opr1sqrl...p8vpx</code>
 </div>
 
 <!-- Body -->
@@ -415,7 +415,9 @@ body{background:var(--bg);color:var(--text);font-family:'DM Mono',monospace;font
 
 <script>
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
-const CONTRACT = 'opr1sqp6szazjvrnxrrqnrds8d6xjld9dyzskssrd5dlf';
+const CONTRACT = 'opr1sqrlcf8xrc23pjasncl97yq3sh39xp3xs3u7p8vpx';
+// bcrt1 equivalent (same witness program, different HRP)
+const CONTRACT_BCRT = 'bcrt1sqrlcf8xrc23pjasncl97yq3sh39xp3xs3uwkjl8f';
 const RPC_URLS = [
   'https://regtest.opnet.org/api/v1/json-rpc',
   'https://regtest.opnet.org/json-rpc',
@@ -506,10 +508,18 @@ const decPending = h => new D(h).u256();
 // ─── RPC READ ─────────────────────────────────────────────────────────────────
 async function rpcRead(sig, args = [], from = null) {
   const cd  = mkCall(sig, ...args);
+  // Try both opr1 and bcrt1 forms of the contract address
+  const baseAddr = window._contractOverride || CONTRACT;
+  const addrs = baseAddr === CONTRACT
+    ? [CONTRACT, CONTRACT_BCRT]
+    : [baseAddr];
   const frm = from || wallet?.address || null;
-  const paramSets = frm
-    ? [[CONTRACT, cd, frm], [CONTRACT, cd]]
-    : [[CONTRACT, cd]];
+  // Build all param combinations: [addr, calldata, from?] × [opr1, bcrt1]
+  const paramSets = [];
+  for (const addr of addrs) {
+    if (frm) paramSets.push([addr, cd, frm]);
+    paramSets.push([addr, cd]);
+  }
   const urls = workingRpc
     ? [workingRpc, ...RPC_URLS.filter(u => u !== workingRpc)]
     : RPC_URLS;
@@ -536,7 +546,12 @@ async function rpcRead(sig, args = [], from = null) {
         let d = typeof j.result === 'string' ? j.result
           : (j.result?.result ?? j.result?.data ?? j.result?.hex ?? '');
         if (d.startsWith('0x')) d = d.slice(2);
-        console.log('[RPC OK]', sig, 'len=' + d.length);
+        console.log('[RPC OK]', sig, 'addr=' + params[0].slice(0,12) + '...', 'len=' + d.length, params.length > 2 ? '+from' : 'no-from');
+        if (d.length === 0) {
+          console.warn('[RPC EMPTY]', sig, 'addr=' + params[0], '- contract may not exist at this address or function selector mismatch');
+          lastErr = new Error('Contract returned empty data (len=0) — check contract address');
+          continue; // try next addr/params combo
+        }
         workingRpc = url;
         return d;
       } catch(e) { lastErr = e; console.warn('[RPC FAIL]', url, e.message); }
@@ -637,18 +652,94 @@ async function refreshRound() {
   setHint('⏳ Loading contract...', 'var(--m)');
   try {
     const hex = await rpcRead('getRoundInfo()');
+    console.log('[refreshRound] hex len=', hex?.length, hex?.slice(0,80));
     if (!hex || hex.length < 64) {
       setSbar(false, 'Empty response (len=' + (hex?.length ?? 0) + ')');
-      setHint('⚠️ Contract returned no data', 'var(--odd)');
+      // Empty can mean: contract exists but no round started yet
+      setHint('⚠️ No round data — start first round to initialize', 'var(--odd)');
+      show('btnNew');
+      document.getElementById('btnNew').innerText = '▶ Start First Round (Initialize)';
+      showDiag(
+        'Contract: ' + CONTRACT + '\n\n' +
+        'Response empty — contract may need initialization.\n' +
+        'Try clicking "Start First Round" above.\n\n' +
+        'Or test in browser console (F12):\n' +
+        'fetch("https://regtest.opnet.org/api/v1/json-rpc",{method:"POST",' +
+        'headers:{"Content-Type":"application/json"},' +
+        'body:JSON.stringify({jsonrpc:"2.0",id:1,method:"btc_call",' +
+        'params:["' + CONTRACT + '","5a699467"]})})' +
+        '.then(r=>r.json()).then(j=>console.log(JSON.stringify(j)))'
+      );
       return;
     }
     round = decRound(hex);
+    hideDiag();
     updateRoundUI();
     setSbar(true);
   } catch(e) {
     console.error('refreshRound:', e.message);
     setSbar(false, e.message);
     setHint('❌ ' + e.message.slice(0,60), 'var(--odd)');
+  }
+}
+
+async function verifyContract() {
+  // Try btc_getCode to check if contract exists
+  try {
+    const r = await fetch('https://regtest.opnet.org/api/v1/json-rpc', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({jsonrpc:'2.0',id:1,method:'btc_getCode',params:[CONTRACT]}),
+      signal: AbortSignal.timeout(6000),
+    });
+    if (r.ok) {
+      const j = await r.json();
+      console.log('[verifyContract] btc_getCode:', JSON.stringify(j).slice(0,200));
+      if (j.result && j.result !== '0x' && j.result !== '') {
+        console.log('[verifyContract] ✅ Contract exists');
+      } else {
+        console.warn('[verifyContract] ⚠️ btc_getCode returned empty — contract may not exist');
+      }
+    }
+  } catch(e) { console.warn('[verifyContract] btc_getCode failed:', e.message); }
+}
+
+function showDiag(msg) {
+  let el = document.getElementById('diagBox');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'diagBox';
+    el.style.cssText = 'background:rgba(248,113,113,0.08);border:1px solid rgba(248,113,113,0.3);' +
+      'border-radius:6px;padding:10px 12px;margin:8px 0;font-size:10px;color:#f87171;' +
+      'white-space:pre-wrap;line-height:1.6;';
+    const betForm = document.querySelector('.bet-form');
+    betForm.insertBefore(el, betForm.firstChild);
+  }
+  el.innerHTML = '⚠️ <strong>Contract Debug Info:</strong>\n' + msg +
+    '\n\n<strong>What to do:</strong>\n' +
+    '→ Run: <code style="color:var(--btc)">opnet contract:get ' + CONTRACT + ' --network regtest</code>\n' +
+    '→ Or paste correct contract address below:\n' +
+    '<input id="contractInput" placeholder="opr1..." style="width:100%;background:#111;border:1px solid #333;' +
+    'border-radius:4px;padding:4px 8px;color:#fff;font-family:DM Mono,monospace;font-size:10px;margin-top:4px;" ' +
+    'value="' + CONTRACT + '"/>\n' +
+    '<button onclick="updateContract()" style="margin-top:4px;padding:3px 10px;background:var(--btc);' +
+    'color:#000;border:none;border-radius:4px;cursor:pointer;font-size:10px;">Update & Retry</button>';
+}
+
+function hideDiag() {
+  const el = document.getElementById('diagBox');
+  if (el) el.remove();
+}
+
+function updateContract() {
+  const val = document.getElementById('contractInput')?.value?.trim();
+  if (val && val.length > 10) {
+    workingRpc = null;
+    // Dynamically update CONTRACT
+    window._contractOverride = val;
+    console.log('[BlockBet] Contract updated to:', val);
+    hideDiag();
+    refreshRound();
   }
 }
 
@@ -751,7 +842,7 @@ function setSbar(ok, err) {
   const el = document.getElementById('sbar');
   if (ok) {
     el.className = 'sbar ok';
-    el.innerHTML = '<span>🟢 OP_NET Regtest · Contract live</span><code>opr1sqp6...d5dlf</code>';
+    el.innerHTML = '<span>🟢 OP_NET Regtest · Contract live</span><code>opr1sqrl...p8vpx</code>';
   } else {
     el.className = 'sbar err';
     el.innerHTML = '<span>⚠️ ' + (err || 'RPC error').slice(0,70) + '</span>';
@@ -901,7 +992,8 @@ function startPriceWS() {
     el.innerText = (ch >= 0 ? '+' : '') + ch.toFixed(2) + '%';
     el.className = 'chg ' + (ch >= 0 ? 'pos' : 'neg');
   };
-  ws.onclose = () => setTimeout(startPriceWS, 3000);
+  let wsRetryDelay = 3000;
+  ws.onclose = () => { setTimeout(startPriceWS, wsRetryDelay); wsRetryDelay = Math.min(wsRetryDelay * 1.5, 30000); };
   ws.onerror = () => ws.close();
 }
 
