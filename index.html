@@ -5,344 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>BlockBet — Bitcoin L1 · OP_NET Regtest</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800;900&display=swap" rel="stylesheet"/>
-<script src="https://s3.tradingview.com/tv.js">
-
-// ─── Graffiti background ──────────────────────────────────────────────────────
-(function() {
-  const canvas = document.getElementById('graffiti-bg');
-  const ctx = canvas.getContext('2d');
-  const NEON = '#f7931a';
-  const NEON2 = '#b8e530';
-  const WHITE = 'rgba(255,255,255,0.07)';
-  const DIM = 'rgba(247,147,26,0.08)';
-
-  function resize() {
-    canvas.width  = window.innerWidth;
-    canvas.height = window.innerHeight;
-    draw();
-  }
-
-  function randInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
-  function rand(min, max) { return Math.random() * (max - min) + min; }
-
-  // Seeded random so it's consistent per session
-  let seed = 42;
-  function srnd() {
-    seed = (seed * 16807 + 0) % 2147483647;
-    return (seed - 1) / 2147483646;
-  }
-  function srandInt(min, max) { return Math.floor(srnd() * (max - min + 1)) + min; }
-  function srand(min, max) { return srnd() * (max - min) + min; }
-
-  function drawSprayPaint(ctx, x, y, radius, color, density = 60) {
-    ctx.save();
-    for (let i = 0; i < density; i++) {
-      const angle = srnd() * Math.PI * 2;
-      const r = Math.pow(srnd(), 0.5) * radius;
-      const px = x + Math.cos(angle) * r;
-      const py = y + Math.sin(angle) * r;
-      const alpha = srand(0.02, 0.18);
-      ctx.globalAlpha = alpha;
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(px, py, srand(0.5, 2.5), 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.restore();
-  }
-
-  function drawGraffitiLetter(ctx, x, y, letter, size, color, angle = 0) {
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(angle);
-
-    // Outline / drip effect
-    ctx.font = `900 ${size}px 'Syne', sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-
-    // Spray halo
-    drawSprayPaint(ctx, 0, 0, size * 0.7, color, 80);
-
-    // Shadow layers for depth
-    ctx.shadowColor = color;
-    ctx.shadowBlur = size * 0.3;
-    ctx.globalAlpha = 0.06;
-    ctx.fillStyle = color;
-    ctx.fillText(letter, 3, 6);
-
-    // Outline stroke
-    ctx.globalAlpha = 0.18;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = size * 0.08;
-    ctx.lineJoin = 'round';
-    ctx.strokeText(letter, 0, 0);
-
-    // Fill
-    ctx.globalAlpha = 0.09;
-    ctx.fillStyle = color;
-    ctx.fillText(letter, 0, 0);
-
-    // Drip
-    const dripCount = srandInt(1, 3);
-    for (let d = 0; d < dripCount; d++) {
-      const dx = srand(-size * 0.3, size * 0.3);
-      const dripLen = srand(size * 0.2, size * 0.9);
-      const dripW = srand(2, 6);
-      ctx.globalAlpha = 0.12;
-      ctx.strokeStyle = color;
-      ctx.lineWidth = dripW;
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(dx, size * 0.4);
-      ctx.bezierCurveTo(
-        dx + srand(-8, 8), size * 0.5 + dripLen * 0.3,
-        dx + srand(-8, 8), size * 0.5 + dripLen * 0.7,
-        dx + srand(-4, 4), size * 0.4 + dripLen
-      );
-      ctx.stroke();
-      // Drip end blob
-      ctx.globalAlpha = 0.1;
-      ctx.beginPath();
-      ctx.arc(dx + srand(-4,4), size * 0.4 + dripLen, dripW * 1.5, 0, Math.PI * 2);
-      ctx.fillStyle = color;
-      ctx.fill();
-    }
-
-    ctx.restore();
-  }
-
-  function drawTag(ctx, x, y, text, size, color, skew = 0) {
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.transform(1, 0, skew, 1, 0, 0);
-
-    const letters = text.split('');
-    let ox = 0;
-    for (const l of letters) {
-      const angle = srand(-0.15, 0.15);
-      const vertJitter = srand(-size * 0.15, size * 0.15);
-      drawGraffitiLetter(ctx, ox, vertJitter, l, size, color, angle);
-      ox += size * srand(0.55, 0.72);
-    }
-    ctx.restore();
-  }
-
-  function drawLine(ctx, x1, y1, x2, y2, color, width, alpha) {
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = width;
-    ctx.lineCap = 'round';
-    ctx.shadowColor = color;
-    ctx.shadowBlur = width * 3;
-    ctx.beginPath();
-    ctx.moveTo(x1, y1);
-    ctx.lineTo(x2, y2);
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  function drawArrow(ctx, x, y, size, color) {
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(srand(-0.3, 0.3));
-    ctx.globalAlpha = 0.12;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = size * 0.08;
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    ctx.shadowColor = color;
-    ctx.shadowBlur = 10;
-    ctx.beginPath();
-    // Arrow up
-    ctx.moveTo(0, size * 0.5);
-    ctx.lineTo(0, -size * 0.5);
-    ctx.moveTo(-size * 0.3, -size * 0.2);
-    ctx.lineTo(0, -size * 0.5);
-    ctx.lineTo(size * 0.3, -size * 0.2);
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  function drawHexagon(ctx, x, y, r, color) {
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(srand(0, Math.PI));
-    ctx.globalAlpha = srand(0.04, 0.1);
-    ctx.strokeStyle = color;
-    ctx.lineWidth = srand(1, 4);
-    ctx.shadowColor = color;
-    ctx.shadowBlur = 8;
-    ctx.beginPath();
-    for (let i = 0; i < 6; i++) {
-      const angle = (Math.PI / 3) * i;
-      const px = Math.cos(angle) * r;
-      const py = Math.sin(angle) * r;
-      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
-    }
-    ctx.closePath();
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  function draw() {
-    const W = canvas.width;
-    const H = canvas.height;
-    seed = 42; // reset seed for consistent render
-
-    ctx.clearRect(0, 0, W, H);
-
-    // ── Base: deep dark gradient (not pure black) ──
-    const bgGrad = ctx.createLinearGradient(0, 0, W, H);
-    bgGrad.addColorStop(0,   '#0d1a0a');
-    bgGrad.addColorStop(0.3, '#0a0f1a');
-    bgGrad.addColorStop(0.6, '#130d1f');
-    bgGrad.addColorStop(1,   '#0a1410');
-    ctx.fillStyle = bgGrad;
-    ctx.fillRect(0, 0, W, H);
-
-    // ── Ink splat blobs — big color explosions ──
-    const blobs = [
-      { x: W*0.08,  y: H*0.15, r: W*0.22, c: 'rgba(247,147,26,',  a: 0.13 },
-      { x: W*0.85,  y: H*0.75, r: W*0.28, c: 'rgba(247,147,26,',  a: 0.10 },
-      { x: W*0.5,   y: H*0.5,  r: W*0.35, c: 'rgba(74,222,128,',  a: 0.07 },
-      { x: W*0.9,   y: H*0.1,  r: W*0.18, c: 'rgba(248,113,113,', a: 0.10 },
-      { x: W*0.1,   y: H*0.85, r: W*0.20, c: 'rgba(248,113,113,', a: 0.08 },
-      { x: W*0.55,  y: H*0.2,  r: W*0.15, c: 'rgba(184,229,48,',  a: 0.09 },
-      { x: W*0.25,  y: H*0.55, r: W*0.12, c: 'rgba(247,147,26,',  a: 0.08 },
-      { x: W*0.75,  y: H*0.45, r: W*0.16, c: 'rgba(74,222,128,',  a: 0.08 },
-    ];
-
-    for (const b of blobs) {
-      // Radial splat
-      const g = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r);
-      g.addColorStop(0,   b.c + (b.a * 2.5) + ')');
-      g.addColorStop(0.4, b.c + b.a + ')');
-      g.addColorStop(0.75, b.c + (b.a * 0.3) + ')');
-      g.addColorStop(1,   b.c + '0)');
-      ctx.globalAlpha = 1;
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Splatter droplets around blob
-      const color = b.c + (b.a * 3) + ')';
-      for (let s = 0; s < 18; s++) {
-        const angle = srnd() * Math.PI * 2;
-        const dist  = srand(b.r * 0.5, b.r * 1.6);
-        const sx = b.x + Math.cos(angle) * dist;
-        const sy = b.y + Math.sin(angle) * dist;
-        const sr2 = srand(2, b.r * 0.12);
-        ctx.globalAlpha = srand(0.05, 0.18);
-        ctx.fillStyle = b.c + (b.a * 4) + ')';
-        ctx.beginPath();
-        // Elongated splat drop
-        ctx.save();
-        ctx.translate(sx, sy);
-        ctx.rotate(angle + Math.PI/2);
-        ctx.ellipse(0, 0, sr2 * 0.5, sr2, 0, 0, Math.PI * 2);
-        ctx.restore();
-        ctx.fill();
-      }
-    }
-
-    // ── Spray strokes — wide brush marks ──
-    const strokes = [
-      { x1: W*0.0,  y1: H*0.3,  x2: W*0.4,  y2: H*0.15, c: NEON,            w: 80 },
-      { x1: W*0.6,  y1: H*0.85, x2: W*1.0,  y2: H*0.65, c: NEON2,           w: 60 },
-      { x1: W*0.2,  y1: H*0.9,  x2: W*0.7,  y2: H*0.95, c: '#4ade80',       w: 50 },
-      { x1: W*0.7,  y1: H*0.0,  x2: W*0.95, y2: H*0.35, c: '#f87171',       w: 55 },
-      { x1: W*0.0,  y1: H*0.65, x2: W*0.25, y2: H*0.5,  c: NEON,            w: 40 },
-    ];
-
-    for (const s of strokes) {
-      const sg = ctx.createLinearGradient(s.x1, s.y1, s.x2, s.y2);
-      sg.addColorStop(0,   s.c + '00');
-      sg.addColorStop(0.3, s.c + '22');
-      sg.addColorStop(0.5, s.c + '18');
-      sg.addColorStop(1,   s.c + '00');
-      ctx.globalAlpha = 1;
-      ctx.strokeStyle = sg;
-      ctx.lineWidth = s.w;
-      ctx.lineCap = 'round';
-      ctx.shadowColor = s.c;
-      ctx.shadowBlur = s.w * 0.8;
-      ctx.beginPath();
-      ctx.moveTo(s.x1, s.y1);
-      const mx = (s.x1 + s.x2) / 2 + srand(-W*0.1, W*0.1);
-      const my = (s.y1 + s.y2) / 2 + srand(-H*0.1, H*0.1);
-      ctx.quadraticCurveTo(mx, my, s.x2, s.y2);
-      ctx.stroke();
-      ctx.shadowBlur = 0;
-    }
-
-    // ── Concrete texture: noise ──
-    for (let i = 0; i < 4000; i++) {
-      ctx.globalAlpha = srand(0.01, 0.05);
-      ctx.fillStyle = srnd() > 0.6 ? '#ffffff' : (srnd() > 0.5 ? NEON : '#333');
-      const px = srnd() * W, py = srnd() * H;
-      ctx.fillRect(px, py, srand(0.5, 2), srand(0.5, 2));
-    }
-
-    // Big background tags - words scattered
-    const words = ['BLOCKBET', 'UP', 'DOWN', 'BTC', 'BITCOIN', 'WIN', 'CHAIN', '0x'];
-    const colors = [NEON, NEON2, 'rgba(255,255,255,0.6)', NEON];
-
-    // Large background word
-    drawTag(ctx, W * 0.02, H * 0.18, 'BLOCKBET', Math.min(W * 0.075, 90), NEON, -0.05);
-    drawTag(ctx, W * 0.55, H * 0.72, 'OPNET', Math.min(W * 0.065, 80), NEON2, 0.04);
-    drawTag(ctx, W * 0.05, H * 0.82, 'BTC', Math.min(W * 0.1, 120), NEON, -0.08);
-    drawTag(ctx, W * 0.6, H * 0.12, 'BITCOIN', Math.min(W * 0.055, 70), 'rgba(255,255,255,0.5)', 0.06);
-    drawTag(ctx, W * 0.3, H * 0.45, 'WIN', Math.min(W * 0.12, 140), NEON2, -0.03);
-    drawTag(ctx, W * 0.7, H * 0.38, '0xCHAIN', Math.min(W * 0.045, 55), NEON, 0.03);
-    drawTag(ctx, W * 0.15, H * 0.6, 'UP', Math.min(W * 0.09, 110), NEON, 0.05);
-    drawTag(ctx, W * 0.75, H * 0.6, 'DOWN', Math.min(W * 0.07, 85), '#f87171', -0.04);
-
-    // Hexagons (blockchain motif)
-    for (let i = 0; i < 18; i++) {
-      drawHexagon(ctx, srnd() * W, srnd() * H, srand(20, 90), i % 3 === 0 ? NEON : NEON2);
-    }
-
-    // Arrows (UP / DOWN arrows)
-    for (let i = 0; i < 12; i++) {
-      drawArrow(ctx, srnd() * W, srnd() * H, srand(30, 80), srnd() > 0.5 ? NEON : '#f87171');
-    }
-
-    // Scratchy tag lines
-    for (let i = 0; i < 25; i++) {
-      const x1 = srnd() * W, y1 = srnd() * H;
-      const x2 = x1 + srand(-200, 200), y2 = y1 + srand(-80, 80);
-      drawLine(ctx, x1, y1, x2, y2, srnd() > 0.7 ? NEON : 'rgba(255,255,255,0.3)', srand(0.5, 3), srand(0.02, 0.07));
-    }
-
-    // Spray circles (random spots)
-    for (let i = 0; i < 20; i++) {
-      drawSprayPaint(ctx, srnd() * W, srnd() * H, srand(30, 120), srnd() > 0.5 ? NEON : NEON2, 40);
-    }
-
-    // Semi-transparent dark overlay so UI stays readable
-    ctx.globalAlpha = 0.55;
-    ctx.fillStyle = '#080808';
-    ctx.fillRect(0, 0, W, H);
-
-    // Vignette edges
-    const vignette = ctx.createRadialGradient(W/2, H/2, H*0.2, W/2, H/2, H);
-    vignette.addColorStop(0,   'rgba(0,0,0,0)');
-    vignette.addColorStop(0.7, 'rgba(0,0,0,0.2)');
-    vignette.addColorStop(1,   'rgba(0,0,0,0.75)');
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = vignette;
-    ctx.fillRect(0, 0, W, H);
-  }
-
-  window.addEventListener('resize', resize);
-  // Wait for Syne font to load for text rendering
-  document.fonts.ready.then(resize);
-  resize();
-})();
-</script>
+<script src="https://s3.tradingview.com/tv.js"></script>
 <style>
 :root{
   --btc:#f7931a;--btc-dim:rgba(247,147,26,.12);--btc-glow:rgba(247,147,26,.06);
@@ -755,178 +418,214 @@ body{background:var(--bg);color:var(--text);font-family:'DM Mono',monospace;font
 const CONTRACT = 'opr1sqp6szazjvrnxrrqnrds8d6xjld9dyzskssrd5dlf';
 const RPC_URLS = [
   'https://regtest.opnet.org/api/v1/json-rpc',
+  'https://regtest.opnet.org/json-rpc',
   'https://regtest.opnet.org/',
-  'https://regtest.opnet.org',
 ];
 const MIN_SATS = 10000;
 
+// ─── METAMASK ISOLATION ───────────────────────────────────────────────────────
+// We ONLY use window.opnet — MetaMask/EVM wallets are completely ignored
+(function isolateEVM() {
+  if (window.ethereum) {
+    console.log('[BlockBet] EVM wallet detected — ignored, using OPWallet only');
+  }
+})();
+
+// Get OPWallet safely (never touches ethereum)
+function getOPWallet() {
+  if (window.opnet) return window.opnet;
+  if (window.unisat && window.unisat.opnet) return window.unisat.opnet;
+  return null;
+}
+
 // ─── STATE ────────────────────────────────────────────────────────────────────
-let wallet    = null;  // { address, publicKey }
-let opnetAddr = null;  // Uint8Array[32]
-let round     = null;
-let myBet     = null;
-let myPending = 0n;
-let isBusy    = false;
-let aiEnabled = true;
-let aiTimer   = null;
-let lastPriceRaw = null;  // for AI calculations
+let wallet      = null;
+let opnetAddr   = null;
+let round       = null;
+let myBet       = null;
+let myPending   = 0n;
+let isBusy      = false;
+let aiOn        = true;
+let aiTimer     = null;
+let lastPrice   = null;
+let workingRpc  = null;
 
 // ─── ENCODING ─────────────────────────────────────────────────────────────────
-const toHex = b => Array.from(b).map(x=>x.toString(16).padStart(2,'0')).join('');
+const toHex = b => Array.from(b).map(x => x.toString(16).padStart(2,'0')).join('');
 function fromHex(h) {
   h = h.startsWith('0x') ? h.slice(2) : h;
-  const o = new Uint8Array(h.length/2);
-  for (let i=0;i<o.length;i++) o[i]=parseInt(h.slice(i*2,i*2+2),16);
+  const o = new Uint8Array(h.length / 2);
+  for (let i = 0; i < o.length; i++) o[i] = parseInt(h.slice(i*2, i*2+2), 16);
   return o;
 }
 function cat(...a) {
-  const t=a.reduce((n,x)=>n+x.length,0),o=new Uint8Array(t);
-  let p=0; a.forEach(x=>{o.set(x,p);p+=x.length;}); return o;
+  const t = a.reduce((n,x) => n+x.length, 0), o = new Uint8Array(t);
+  let p = 0; a.forEach(x => { o.set(x, p); p += x.length; }); return o;
 }
-const b8  = v => new Uint8Array([v?1:0]);
+const b8 = v => new Uint8Array([v ? 1 : 0]);
 function u64be(v) {
-  const n=BigInt(v),b=new Uint8Array(8);
-  for(let i=0;i<8;i++) b[7-i]=Number((n>>BigInt(i*8))&0xffn); return b;
+  const n = BigInt(v), b = new Uint8Array(8);
+  for (let i = 0; i < 8; i++) b[7-i] = Number((n >> BigInt(i*8)) & 0xffn);
+  return b;
 }
-function a32(b) { if(b.length!==32) throw new Error('need 32 bytes'); return b; }
+function a32(b) { if (b.length !== 32) throw new Error('need 32 bytes'); return b; }
 function fnvSel(sig) {
-  let h=0x811c9dc5;
-  for(let i=0;i<sig.length;i++){h^=sig.charCodeAt(i);h=(Math.imul(h,0x01000193)>>>0);}
-  const b=new Uint8Array(4); new DataView(b.buffer).setUint32(0,h,true); return b;
+  let h = 0x811c9dc5;
+  for (let i = 0; i < sig.length; i++) { h ^= sig.charCodeAt(i); h = (Math.imul(h, 0x01000193) >>> 0); }
+  const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, h, true); return b;
 }
-const mkCall = (sig,...args) => toHex(cat(fnvSel(sig),...args));
-const s2btc  = s => (Number(s)/1e8).toFixed(8).replace(/\.?0+$/,'')||'0';
+const mkCall = (sig, ...args) => toHex(cat(fnvSel(sig), ...args));
+const s2btc  = s => (Number(s) / 1e8).toFixed(8).replace(/\.?0+$/, '') || '0';
 async function sha256hex(hex) {
-  const h = await crypto.subtle.digest('SHA-256',fromHex(hex).buffer);
+  const h = await crypto.subtle.digest('SHA-256', fromHex(hex).buffer);
   return new Uint8Array(h);
 }
 
 // ─── DECODER ──────────────────────────────────────────────────────────────────
 class D {
-  constructor(h){const b=fromHex(h);this.v=new DataView(b.buffer);this.o=0;}
-  bool(){return this.v.getUint8(this.o++)!==0;}
-  u256(){let v=0n;for(let i=0;i<32;i++)v=(v<<8n)|BigInt(this.v.getUint8(this.o+i));this.o+=32;return v;}
+  constructor(h) { const b = fromHex(h); this.v = new DataView(b.buffer); this.o = 0; }
+  bool()  { return this.v.getUint8(this.o++) !== 0; }
+  u256()  {
+    let v = 0n;
+    for (let i = 0; i < 32; i++) v = (v << 8n) | BigInt(this.v.getUint8(this.o+i));
+    this.o += 32; return v;
+  }
 }
-const decRound = h=>{
-  const d=new D(h);
+const decRound = h => {
+  const d = new D(h);
   return {
-    roundId:d.u256(),targetBlock:d.u256(),
-    evenPool:d.u256(),oddPool:d.u256(),
-    settled:d.bool(),winnerSide:Number(d.u256()),
-    currentBlock:d.u256(),winningBlock:d.u256(),
+    roundId: d.u256(), targetBlock: d.u256(),
+    evenPool: d.u256(), oddPool: d.u256(),
+    settled: d.bool(), winnerSide: Number(d.u256()),
+    currentBlock: d.u256(), winningBlock: d.u256(),
   };
 };
-const decBet     = h=>{const d=new D(h);return{even:d.u256(),odd:d.u256(),claimed:d.bool()};};
-const decPending = h=>new D(h).u256();
+const decBet     = h => { const d = new D(h); return { even: d.u256(), odd: d.u256(), claimed: d.bool() }; };
+const decPending = h => new D(h).u256();
 
-// ─── RPC ──────────────────────────────────────────────────────────────────────
-async function rpcRead(sig, args=[], from=null) {
-  const cd  = mkCall(sig,...args);
+// ─── RPC READ ─────────────────────────────────────────────────────────────────
+async function rpcRead(sig, args = [], from = null) {
+  const cd  = mkCall(sig, ...args);
   const frm = from || wallet?.address || null;
+  const paramSets = frm
+    ? [[CONTRACT, cd, frm], [CONTRACT, cd]]
+    : [[CONTRACT, cd]];
+  const urls = workingRpc
+    ? [workingRpc, ...RPC_URLS.filter(u => u !== workingRpc)]
+    : RPC_URLS;
+
   let lastErr = null;
-
-  for (const url of RPC_URLS) {
-    // Try WITH from first, then without
-    const attempts = frm
-      ? [[CONTRACT, cd, frm], [CONTRACT, cd]]
-      : [[CONTRACT, cd]];
-
-    for (const params of attempts) {
+  for (const url of urls) {
+    for (const params of paramSets) {
       try {
-        const r = await fetch(url, {
-          method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({jsonrpc:'2.0',id:1,method:'btc_call',params}),
+        const resp = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'btc_call', params }),
+          signal: AbortSignal.timeout(8000),
         });
-        if (!r.ok) { lastErr=new Error('HTTP '+r.status); break; }
-        const j = await r.json();
+        if (!resp.ok) { lastErr = new Error('HTTP ' + resp.status); break; }
+        const j = await resp.json();
         if (j.error) {
           const msg = j.error?.message || String(j.error);
-          console.warn('[RPC]', sig, url, '→', msg);
+          console.warn('[RPC ERR]', sig, url, params.length > 2 ? '+from' : 'no-from', msg);
           lastErr = new Error(msg);
-          continue; // try without from
+          if (msg.toLowerCase().includes('address') || msg.toLowerCase().includes('sender')) continue;
+          break;
         }
-        let d = typeof j.result==='string' ? j.result : (j.result?.result ?? j.result?.data ?? '');
+        let d = typeof j.result === 'string' ? j.result
+          : (j.result?.result ?? j.result?.data ?? j.result?.hex ?? '');
         if (d.startsWith('0x')) d = d.slice(2);
-        console.log('[RPC OK]', sig, 'len='+d.length, 'from='+(params.length>2?'yes':'no'));
+        console.log('[RPC OK]', sig, 'len=' + d.length);
+        workingRpc = url;
         return d;
-      } catch(e) { lastErr=e; }
+      } catch(e) { lastErr = e; console.warn('[RPC FAIL]', url, e.message); }
     }
   }
   throw lastErr || new Error('All RPC endpoints failed');
 }
 
-async function rpcWrite(sig, args=[], sats=0) {
-  if (!window.opnet) throw new Error('OPWallet not found');
-  return window.opnet.signAndBroadcastInteraction({
-    to: CONTRACT, calldata: mkCall(sig,...args), value: sats,
+// ─── RPC WRITE ────────────────────────────────────────────────────────────────
+async function rpcWrite(sig, args = [], sats = 0) {
+  const opw = getOPWallet();
+  if (!opw) throw new Error('OPWallet not found');
+  return opw.signAndBroadcastInteraction({
+    to: CONTRACT, calldata: mkCall(sig, ...args), value: sats,
   });
 }
 
 // ─── WALLET ───────────────────────────────────────────────────────────────────
 async function connectWallet() {
-  if (!window.opnet) {
-    alert('OPWallet not found!\n\nInstall: https://github.com/btc-vision/opwallet/releases\n\nThen switch to Regtest and get tBTC from faucet.opnet.org');
+  const opw = getOPWallet();
+  if (!opw) {
+    alert(
+      'OPWallet не обнаружен!\n\n' +
+      'Установите OPWallet:\ngithub.com/btc-vision/opwallet/releases\n\n' +
+      'Затем:\n' +
+      '1. Откройте OPWallet → Settings → Network → Regtest\n' +
+      '2. Получите tBTC: faucet.opnet.org\n\n' +
+      'Если установлен MetaMask — он не мешает, они работают независимо.\n' +
+      'OPWallet использует window.opnet, не window.ethereum.'
+    );
     return;
   }
   const btn = document.getElementById('btnConn');
-  btn.innerText='Connecting...'; btn.disabled=true;
+  btn.innerText = 'Connecting...'; btn.disabled = true;
   try {
     const [addrs, pk] = await Promise.all([
-      window.opnet.requestAccounts(),
-      window.opnet.getPublicKey(),
+      opw.requestAccounts(),
+      opw.getPublicKey(),
     ]);
     if (!addrs?.length) throw new Error('No accounts');
     const addr = addrs[0];
-    wallet    = { address:addr, publicKey:pk };
+    wallet    = { address: addr, publicKey: pk };
     opnetAddr = await sha256hex(pk);
 
-    const short = addr.slice(0,10)+'...'+addr.slice(-6);
+    const short = addr.slice(0,10) + '...' + addr.slice(-6);
     document.getElementById('walletAddr').innerText = short;
-    btn.innerHTML = '<div class="wdot"></div>'+short;
-    btn.className = 'btn-conn on'; btn.disabled=false; btn.onclick=null;
-    document.getElementById('btnDisc').style.display='flex';
+    btn.innerHTML = '<div class="wdot"></div>' + short;
+    btn.className = 'btn-conn on'; btn.disabled = false; btn.onclick = null;
+    document.getElementById('btnDisc').style.display = 'flex';
 
-    // Fetch balance
-    fetchBalance();
-    updateBtns();
-    await refreshMyBet();
-    runAI();
-    window.opnet.on('disconnect', disconnectWallet);
+    fetchBalance(); updateBtns(); await refreshMyBet(); runAI();
+    opw.on?.('disconnect', disconnectWallet);
+    opw.on?.('accountsChanged', () => disconnectWallet());
   } catch(e) {
-    btn.innerText='Connect OPWallet'; btn.className='btn-conn off'; btn.disabled=false;
-    alert('Failed: '+e.message);
+    btn.innerText = 'Connect OPWallet'; btn.className = 'btn-conn off'; btn.disabled = false;
+    alert('Connection failed: ' + e.message);
   }
 }
 
 function disconnectWallet() {
-  try { window.opnet?.disconnect?.(); } catch(e){}
-  wallet=null; opnetAddr=null; myBet=null; myPending=0n;
-  const btn=document.getElementById('btnConn');
-  btn.innerHTML='Connect OPWallet'; btn.className='btn-conn off'; btn.onclick=connectWallet;
-  document.getElementById('btnDisc').style.display='none';
-  document.getElementById('walletAddr').innerText='Not connected';
-  document.getElementById('walletBal').innerText='—';
-  document.getElementById('myBet').innerText='—';
+  try { getOPWallet()?.disconnect?.(); } catch(e) {}
+  wallet = null; opnetAddr = null; myBet = null; myPending = 0n;
+  const btn = document.getElementById('btnConn');
+  btn.innerHTML = 'Connect OPWallet'; btn.className = 'btn-conn off'; btn.onclick = connectWallet;
+  document.getElementById('btnDisc').style.display = 'none';
+  document.getElementById('walletAddr').innerText = 'Not connected';
+  document.getElementById('walletBal').innerText  = '—';
+  document.getElementById('myBet').innerText      = '—';
   hideAll(); updateBtns();
 }
 
 async function fetchBalance() {
-  if (!wallet || !window.opnet) return;
+  if (!wallet) return;
+  const opw = getOPWallet();
+  if (!opw) return;
   try {
-    // OPWallet getBalance returns satoshis
-    const bal = await window.opnet.getBalance?.();
-    if (bal !== undefined) {
-      const sats = typeof bal === 'bigint' ? bal : BigInt(bal);
-      document.getElementById('walletBal').innerText = s2btc(sats)+' BTC';
-    } else {
-      // Fallback: try getAccountBalance
-      const info = await window.opnet.getAccountBalance?.(wallet.address);
-      if (info?.confirmed !== undefined) {
-        document.getElementById('walletBal').innerText =
-          s2btc(BigInt(info.confirmed))+' BTC';
-      }
+    let sats = null;
+    if (opw.getBalance) {
+      const b = await opw.getBalance();
+      sats = typeof b === 'bigint' ? b : BigInt(b ?? 0);
+    } else if (opw.getAccountBalance) {
+      const b = await opw.getAccountBalance(wallet.address);
+      sats = BigInt(b?.confirmed ?? b?.balance ?? 0);
+    } else if (opw.getBalances) {
+      const b = await opw.getBalances();
+      sats = BigInt(b?.confirmed ?? b?.total ?? 0);
     }
+    document.getElementById('walletBal').innerText =
+      sats !== null && sats >= 0n ? s2btc(sats) + ' tBTC' : '— tBTC';
   } catch(e) {
     console.warn('fetchBalance:', e.message);
     document.getElementById('walletBal').innerText = '— tBTC';
@@ -935,45 +634,43 @@ async function fetchBalance() {
 
 // ─── DATA ─────────────────────────────────────────────────────────────────────
 async function refreshRound() {
+  setHint('⏳ Loading contract...', 'var(--m)');
   try {
     const hex = await rpcRead('getRoundInfo()');
-    if (!hex || hex.length < 32) { setSync(); return; }
+    if (!hex || hex.length < 64) {
+      setSbar(false, 'Empty response (len=' + (hex?.length ?? 0) + ')');
+      setHint('⚠️ Contract returned no data', 'var(--odd)');
+      return;
+    }
     round = decRound(hex);
     updateRoundUI();
     setSbar(true);
   } catch(e) {
-    console.warn('refreshRound:', e.message);
-    setSync();
+    console.error('refreshRound:', e.message);
     setSbar(false, e.message);
-    const h=document.getElementById('betHint');
-    h.innerText='❌ '+e.message.slice(0,70);
-    h.style.color='var(--odd)';
+    setHint('❌ ' + e.message.slice(0,60), 'var(--odd)');
   }
 }
 
 async function refreshMyBet() {
   if (!opnetAddr || !wallet) return;
   try {
-    const a = a32(opnetAddr);
-    const [bh,ph] = await Promise.all([
-      rpcRead('getBetInfo(address)', [a], wallet.address),
-      rpcRead('getPendingWithdrawal(address)', [a], wallet.address),
+    const addr32 = a32(opnetAddr);
+    const [bh, ph] = await Promise.all([
+      rpcRead('getBetInfo(address)',           [addr32], wallet.address),
+      rpcRead('getPendingWithdrawal(address)', [addr32], wallet.address),
     ]);
     myBet     = decBet(bh);
     myPending = decPending(ph);
-    const tot = myBet.even+myBet.odd;
-    document.getElementById('myBet').innerText = tot>0n
-      ? Number(tot).toLocaleString()+' sats ('+(myBet.even>0n?'🟢EVEN':'🔴ODD')+')'
+    const tot = myBet.even + myBet.odd;
+    document.getElementById('myBet').innerText = tot > 0n
+      ? Number(tot).toLocaleString() + ' sats (' + (myBet.even > 0n ? '🟢EVEN' : '🔴ODD') + ')'
       : '—';
-    updateActBtns();
-    updateBtns();
-    fetchBalance(); // refresh after bet
+    updateActBtns(); updateBtns(); fetchBalance();
   } catch(e) { console.warn('refreshMyBet:', e.message); }
 }
 
 // ─── AI AGENT ─────────────────────────────────────────────────────────────────
-let aiOn = true;
-
 function toggleAI() {
   aiOn = !aiOn;
   const btn = document.getElementById('aiToggle');
@@ -982,6 +679,7 @@ function toggleAI() {
   document.getElementById('aiThinking').style.display = 'none';
   document.getElementById('aiResult').style.display   = 'none';
   document.getElementById('aiOff').style.display      = aiOn ? 'none' : 'block';
+  if (aiTimer) clearTimeout(aiTimer);
   if (aiOn) runAI();
 }
 
@@ -990,329 +688,270 @@ function runAI() {
   document.getElementById('aiThinking').style.display = 'flex';
   document.getElementById('aiResult').style.display   = 'none';
   document.getElementById('aiOff').style.display      = 'none';
-
-  // Simulate AI analysis with real data context
-  setTimeout(() => {
-    if (!aiOn) return;
-    computeAIPrediction();
-  }, 1200 + Math.random()*800);
+  setTimeout(computeAI, 900 + Math.random() * 700);
 }
 
-function computeAIPrediction() {
-  // AI uses: last 256 hashes statistically ~50/50, but adds:
-  // 1. Pool imbalance signal (contrarian: lean toward smaller pool)
-  // 2. BTC price momentum (weak correlation heuristic)
-  // 3. Time-of-day entropy estimate
-  // 4. Recent block nonce distribution pattern
+function computeAI() {
+  if (!aiOn) return;
+  const ep  = round ? Number(round.evenPool) : 0;
+  const op  = round ? Number(round.oddPool)  : 0;
+  const tot = ep + op;
+  let es = 50, os = 50;
 
-  const evenPool = round ? Number(round.evenPool) : 0;
-  const oddPool  = round ? Number(round.oddPool)  : 0;
-  const total    = evenPool + oddPool;
+  // Signal 1: pool imbalance (contrarian)
+  if (tot > 0) { const imb = (ep / tot - 0.5) * 28; es -= imb; os += imb; }
+  // Signal 2: time entropy
+  const min  = new Date().getMinutes();
+  const entr = Math.sin(min * 0.314 + Date.now() % 1000 * 0.001) * 7;
+  es += entr; os -= entr;
+  // Signal 3: price last digit
+  if (lastPrice) { const mod = (lastPrice % 2 === 0 ? 2.5 : -2.5); es += mod; os -= mod; }
+  // Signal 4: block parity
+  if (round?.currentBlock) { const bm = (Number(round.currentBlock) % 2 === 0 ? 2 : -2); es += bm; os -= bm; }
 
-  // Base: 50/50
-  let evenScore = 50;
-  let oddScore  = 50;
+  const rawTot = es + os;
+  es = Math.max(5, Math.min(95, Math.round(es / rawTot * 100)));
+  os = 100 - es;
+  const noise = Math.round((Math.random() - 0.5) * 4);
+  es = Math.max(5, Math.min(95, es + noise));
+  os = 100 - es;
 
-  // Signal 1: pool imbalance (contrarian — lean to smaller pool)
-  if (total > 0) {
-    const evenRatio = evenPool / total;
-    // If 60% in EVEN, lean slightly toward ODD
-    const imbalance = (evenRatio - 0.5) * 30;
-    evenScore -= imbalance;
-    oddScore  += imbalance;
+  const isEven = es > os;
+  const conf   = isEven ? es : os;
+  const confLbl = conf >= 65 ? 'HIGH' : conf >= 55 ? 'MODERATE' : 'LOW';
+
+  let reason = '';
+  if (tot > 0) {
+    const pct = Math.round(ep / tot * 100);
+    reason += pct + '% pool on EVEN → ' + (pct > 55 ? 'contrarian→ODD' : pct < 45 ? 'contrarian→EVEN' : 'balanced') + ' · ';
   }
+  reason += 'Entropy=' + entr.toFixed(1) + ' · Block#' + (round?.currentBlock ?? '?').toString();
+  reason += ' · Note: BTC hashes are ~50/50 by design';
 
-  // Signal 2: nonce entropy (time-based pseudo-random signal)
-  const now      = Date.now();
-  const minute   = Math.floor(now / 60000) % 60;
-  const entropy  = (Math.sin(minute * 0.314) * 8);
-  evenScore += entropy;
-  oddScore  -= entropy;
-
-  // Signal 3: price momentum
-  if (lastPriceRaw) {
-    // Higher price → slightly more even nonces (spurious but adds flavor)
-    const priceMod = (lastPriceRaw % 2 === 0 ? 3 : -3);
-    evenScore += priceMod;
-    oddScore  -= priceMod;
-  }
-
-  // Normalize to 100
-  const rawTotal = evenScore + oddScore;
-  evenScore = Math.max(5, Math.min(95, Math.round(evenScore / rawTotal * 100)));
-  oddScore  = 100 - evenScore;
-
-  // Add small random noise ±3%
-  const noise = Math.round((Math.random()-0.5)*6);
-  evenScore = Math.max(5, Math.min(95, evenScore+noise));
-  oddScore  = 100 - evenScore;
-
-  const isEven = evenScore > oddScore;
-  const conf   = isEven ? evenScore : oddScore;
-  const confLabel = conf >= 60 ? 'High' : conf >= 55 ? 'Moderate' : 'Low';
-
-  // Reasons
-  const reasons = [];
-  if (total > 0) {
-    const pct = Math.round(evenPool/total*100);
-    if (pct > 60) reasons.push(`${pct}% of pool on EVEN → contrarian signal for ODD`);
-    else if (pct < 40) reasons.push(`${pct}% of pool on ODD → contrarian signal for EVEN`);
-    else reasons.push('Pool balanced — no strong contrarian signal');
-  }
-  reasons.push(`Time entropy score: ${entropy.toFixed(1)}`);
-  reasons.push('Note: Bitcoin block hashes are ~50/50 by design');
-
-  // Update UI
-  document.getElementById('aiEvenPct').innerText = evenScore+'%';
-  document.getElementById('aiOddPct').innerText  = oddScore+'%';
-  document.getElementById('aiEvenBar').style.width = evenScore+'%';
-  document.getElementById('aiOddBar').style.width  = oddScore+'%';
-
+  document.getElementById('aiEvenPct').innerText = es + '%';
+  document.getElementById('aiOddPct').innerText  = os + '%';
+  document.getElementById('aiEvenBar').style.width = es + '%';
+  document.getElementById('aiOddBar').style.width  = os + '%';
   const recEl = document.getElementById('aiRec');
-  recEl.innerText  = isEven ? '→ BET EVEN' : '→ BET ODD';
-  recEl.className  = 'ai-rec '+(isEven?'even':'odd');
-
-  document.getElementById('aiConf').innerText = conf+'% · '+confLabel;
-  document.getElementById('aiReason').innerText = reasons.join(' · ');
-
+  recEl.innerText = isEven ? '→ BET EVEN' : '→ BET ODD';
+  recEl.className = 'ai-rec ' + (isEven ? 'even' : 'odd');
+  document.getElementById('aiConf').innerText   = conf + '% · ' + confLbl;
+  document.getElementById('aiReason').innerText = reason;
   document.getElementById('aiThinking').style.display = 'none';
   document.getElementById('aiResult').style.display   = 'flex';
-
-  // Re-run every 30s
   if (aiTimer) clearTimeout(aiTimer);
   aiTimer = setTimeout(runAI, 30000);
 }
 
 // ─── UI ───────────────────────────────────────────────────────────────────────
-function setSync() {
-  ['roundId','targetBlock'].forEach(id=>document.getElementById(id).innerText='—');
-  document.getElementById('curBlock').innerText='—';
-  document.getElementById('evenPool').innerText='0';
-  document.getElementById('oddPool').innerText='0';
-  document.getElementById('poolPct').innerText='50%';
-  document.getElementById('poolBar').style.width='50%';
-  setPill('CONNECTING','p-sync');
+function setHint(txt, color) {
+  const h = document.getElementById('betHint'); h.innerText = txt; h.style.color = color;
 }
-
 function setSbar(ok, err) {
-  const el=document.getElementById('sbar');
+  const el = document.getElementById('sbar');
   if (ok) {
-    el.className='sbar ok';
-    el.innerHTML='<span>🟢 OP_NET Regtest · Contract live</span><code>opr1sqp6...d5dlf</code>';
+    el.className = 'sbar ok';
+    el.innerHTML = '<span>🟢 OP_NET Regtest · Contract live</span><code>opr1sqp6...d5dlf</code>';
   } else {
-    const msg=(err||'RPC error').slice(0,60);
-    el.className='sbar err';
-    el.innerHTML='<span>⚠️ '+msg+'</span>';
+    el.className = 'sbar err';
+    el.innerHTML = '<span>⚠️ ' + (err || 'RPC error').slice(0,70) + '</span>';
   }
+}
+function setSync() {
+  ['roundId','targetBlock'].forEach(id => document.getElementById(id).innerText = '—');
+  document.getElementById('curBlock').innerText  = '—';
+  document.getElementById('evenPool').innerText  = '0';
+  document.getElementById('oddPool').innerText   = '0';
+  document.getElementById('poolPct').innerText   = '50%';
+  document.getElementById('poolBar').style.width = '50%';
+  setPill('CONNECTING', 'p-sync');
+}
+function setPill(t, c) { const e = document.getElementById('pill'); e.innerText = t; e.className = 'pill ' + c; }
+function show(id) { const e = document.getElementById(id); if(e) { e.style.display = 'block'; e.disabled = false; } }
+function hide(id) { const e = document.getElementById(id); if(e) e.style.display = 'none'; }
+function hideAll() {
+  ['btnSettle','btnClaim','btnWd','btnNew'].forEach(hide);
+  document.getElementById('payBan').className = 'pay-ban';
+}
+function showHashViz(ew) {
+  document.getElementById('hashBox').style.display = 'block';
+  const n = ew ? 'c' : '9';
+  document.getElementById('hashD').innerHTML =
+    '<span style="color:var(--m)">000000000000000000024b5f8e3da7c...</span>' +
+    '<span class="hash-last">' + n + '</span>';
+  const p = document.getElementById('hashPar');
+  p.innerHTML = ew ? '🟢 EVEN (' + n + ' = 12)' : '🔴 ODD (' + n + ' = 9)';
+  p.className = 'par ' + (ew ? 'even' : 'odd');
 }
 
 function updateRoundUI() {
   if (!round) { setSync(); return; }
-  document.getElementById('roundId').innerText = '#'+round.roundId.toString();
+  document.getElementById('roundId').innerText     = '#' + round.roundId.toString();
   document.getElementById('targetBlock').innerText = Number(round.targetBlock).toLocaleString();
   document.getElementById('curBlock').innerText    = Number(round.currentBlock).toLocaleString();
-
-  const ep=Number(round.evenPool), op=Number(round.oddPool);
+  const ep = Number(round.evenPool), op = Number(round.oddPool);
   document.getElementById('evenPool').innerText = ep.toLocaleString();
   document.getElementById('oddPool').innerText  = op.toLocaleString();
-  const tot=ep+op, pct=tot>0?(ep/tot*100).toFixed(1):50;
-  document.getElementById('poolPct').innerText   = pct+'%';
-  document.getElementById('poolBar').style.width = pct+'%';
+  const tot = ep + op, pct = tot > 0 ? (ep / tot * 100).toFixed(1) : 50;
+  document.getElementById('poolPct').innerText   = pct + '%';
+  document.getElementById('poolBar').style.width = pct + '%';
 
-  const cur=Number(round.currentBlock), tgt=Number(round.targetBlock);
-  const ban=document.getElementById('resBan');
+  const cur = Number(round.currentBlock), tgt = Number(round.targetBlock);
+  const ban = document.getElementById('resBan');
   hideAll();
 
   if (round.settled) {
-    const ew=round.winnerSide===1;
+    const ew = round.winnerSide === 1;
     setPill('SETTLED','p-sett');
-    ban.className='res-ban show '+(ew?'ew':'ow');
-    ban.innerHTML=ew?'🟢 EVEN WON — last nibble was even':'🔴 ODD WON — last nibble was odd';
-    showHashViz(ew);
-    show('btnNew');
-  } else if (cur>=tgt&&tgt>0) {
-    setPill('PENDING','p-pend');
-    ban.className='res-ban'; show('btnSettle');
+    ban.className = 'res-ban show ' + (ew ? 'ew' : 'ow');
+    ban.innerHTML = ew ? '🟢 EVEN WON — last nibble was even' : '🔴 ODD WON — last nibble was odd';
+    showHashViz(ew); show('btnNew');
+  } else if (cur >= tgt && tgt > 0) {
+    setPill('PENDING','p-pend'); ban.className = 'res-ban'; show('btnSettle');
   } else {
-    setPill('OPEN','p-open'); ban.className='res-ban';
+    setPill('OPEN','p-open'); ban.className = 'res-ban';
   }
-  updateActBtns(); updateBtns();
-  if (aiOn) runAI(); // refresh AI when round updates
+  updateActBtns(); updateBtns(); if (aiOn) runAI();
 }
 
 function updateActBtns() {
-  if (!round||!myBet||!round.settled) return;
-  const tot=myBet.even+myBet.odd;
-  const iWon=(round.winnerSide===1&&myBet.even>0n)||(round.winnerSide===2&&myBet.odd>0n);
-  if (iWon&&!myBet.claimed&&tot>0n) show('btnClaim');
-  if (myPending>0n) {
-    document.getElementById('btnWd').innerText='⬇ Withdraw '+s2btc(myPending)+' BTC';
+  if (!round || !myBet || !round.settled) return;
+  const tot  = myBet.even + myBet.odd;
+  const iWon = (round.winnerSide===1 && myBet.even>0n) || (round.winnerSide===2 && myBet.odd>0n);
+  if (iWon && !myBet.claimed && tot > 0n) show('btnClaim');
+  if (myPending > 0n) {
+    document.getElementById('btnWd').innerText = '⬇ Withdraw ' + s2btc(myPending) + ' BTC';
     show('btnWd');
   }
 }
 
 function updateBtns() {
-  const cur=Number(round?.currentBlock||0), tgt=Number(round?.targetBlock||0);
-  const noBet=!myBet||(myBet.even===0n&&myBet.odd===0n);
-  const canBet=wallet&&round&&!round.settled&&(tgt===0||cur<tgt)&&noBet&&!isBusy;
-  document.getElementById('btnEven').disabled=!canBet;
-  document.getElementById('btnOdd').disabled=!canBet;
-  const h=document.getElementById('betHint');
-  if (!wallet) { h.innerText='Connect OPWallet to start betting'; h.style.color='var(--m)'; }
-  else if (!round) { h.innerText='⏳ Loading contract...'; h.style.color='var(--m)'; }
-  else if (round.settled) { h.innerText='Round settled — start new round'; h.style.color='var(--m)'; }
-  else if (!noBet) { h.innerText='✓ Bet placed — awaiting block #'+tgt.toLocaleString(); h.style.color='var(--even)'; }
-  else if (cur>=tgt&&tgt>0) { h.innerText='⛏ Target mined — settle now!'; h.style.color='var(--btc)'; }
-  else { h.innerText='Min: 10,000 sats · Target #'+tgt.toLocaleString(); h.style.color='var(--m)'; }
+  const cur   = Number(round?.currentBlock || 0);
+  const tgt   = Number(round?.targetBlock  || 0);
+  const noBet = !myBet || (myBet.even === 0n && myBet.odd === 0n);
+  const canBet = wallet && round && !round.settled && (tgt === 0 || cur < tgt) && noBet && !isBusy;
+  document.getElementById('btnEven').disabled = !canBet;
+  document.getElementById('btnOdd').disabled  = !canBet;
+  if (!wallet)            { setHint('Connect OPWallet to start betting', 'var(--m)'); return; }
+  if (!round)             { setHint('⏳ Loading contract...', 'var(--m)'); return; }
+  if (round.settled)      { setHint('Round settled — start new round', 'var(--m)'); return; }
+  if (!noBet)             { setHint('✓ Bet placed — awaiting block #' + tgt.toLocaleString(), 'var(--even)'); return; }
+  if (cur >= tgt && tgt > 0) { setHint('⛏ Target mined — settle now!', 'var(--btc)'); return; }
+  setHint('Min: 10,000 sats · Target block #' + tgt.toLocaleString(), 'var(--m)');
 }
 
 // ─── ACTIONS ──────────────────────────────────────────────────────────────────
 async function placeBet(isEven) {
   if (!wallet) { alert('Connect OPWallet first'); return; }
-  const sats=parseInt(document.getElementById('betAmt').value);
-  if (!sats||sats<MIN_SATS) { alert('Min: '+MIN_SATS.toLocaleString()+' sats'); return; }
-  isBusy=true; updateBtns();
-  const h=document.getElementById('betHint');
-  h.innerText='⏳ Confirm in OPWallet...'; h.style.color='var(--btc)';
+  const sats = parseInt(document.getElementById('betAmt').value);
+  if (!sats || sats < MIN_SATS) { alert('Minimum: ' + MIN_SATS.toLocaleString() + ' sats'); return; }
+  isBusy = true; updateBtns(); setHint('⏳ Confirm in OPWallet...', 'var(--btc)');
   try {
-    const r=await rpcWrite('bet(bool,uint64)',[b8(isEven),u64be(sats)],sats);
-    const tx=r?.txid??r?.txId??'';
-    h.innerText='✓ Broadcast!'+(tx?' · '+tx.slice(0,14)+'...':'');
-    h.style.color='var(--even)';
-    fetchBalance();
-    setTimeout(()=>{refreshRound();refreshMyBet();},4000);
-  } catch(e) {
-    h.innerText='❌ '+(e.message||'Failed'); h.style.color='var(--odd)';
-  } finally { isBusy=false; updateBtns(); }
+    const r  = await rpcWrite('bet(bool,uint64)', [b8(isEven), u64be(sats)], sats);
+    const tx = r?.txid ?? r?.txId ?? '';
+    setHint('✓ Broadcast!' + (tx ? ' · ' + tx.slice(0,14) + '...' : ''), 'var(--even)');
+    fetchBalance(); setTimeout(() => { refreshRound(); refreshMyBet(); }, 4000);
+  } catch(e) { setHint('❌ ' + (e.message || 'Failed'), 'var(--odd)'); }
+  finally { isBusy = false; updateBtns(); }
 }
-
 async function doSettle() {
-  if (!wallet) return;
-  const b=document.getElementById('btnSettle');
-  b.disabled=true; b.innerText='⏳ Settling...';
-  try { await rpcWrite('settle()',[],0); setTimeout(refreshRound,5000); }
-  catch(e) { alert('Failed: '+e.message); b.disabled=false; b.innerText='⛏ Settle Round'; }
+  const b = document.getElementById('btnSettle'); b.disabled = true; b.innerText = '⏳ Settling...';
+  try { await rpcWrite('settle()', [], 0); setTimeout(refreshRound, 5000); }
+  catch(e) { alert('Failed: ' + e.message); b.disabled = false; b.innerText = '⛏ Settle Round'; }
 }
-
 async function doClaim() {
-  if (!wallet) return;
-  const b=document.getElementById('btnClaim');
-  b.disabled=true; b.innerText='⏳ Claiming...';
+  const b = document.getElementById('btnClaim'); b.disabled = true; b.innerText = '⏳ Claiming...';
   try {
-    await rpcWrite('claim()',[],0);
-    const pb=document.getElementById('payBan');
-    pb.className='pay-ban win show';
-    pb.innerHTML='🏆 Claimed! Press Withdraw to receive BTC';
-    hide('btnClaim');
-    setTimeout(()=>{refreshRound();refreshMyBet();},5000);
-  } catch(e) { alert('Failed: '+e.message); b.disabled=false; b.innerText='🏆 Claim Winnings'; }
+    await rpcWrite('claim()', [], 0);
+    const pb = document.getElementById('payBan');
+    pb.className = 'pay-ban win show'; pb.innerHTML = '🏆 Claimed! Press Withdraw to receive BTC';
+    hide('btnClaim'); setTimeout(() => { refreshRound(); refreshMyBet(); }, 5000);
+  } catch(e) { alert('Failed: ' + e.message); b.disabled = false; b.innerText = '🏆 Claim Winnings'; }
 }
-
 async function doWithdraw() {
-  if (!wallet) return;
-  const b=document.getElementById('btnWd');
-  b.disabled=true; b.innerText='⏳ Withdrawing...';
+  const b = document.getElementById('btnWd'); b.disabled = true; b.innerText = '⏳ Withdrawing...';
   try {
-    await rpcWrite('withdraw()',[],0);
-    const pb=document.getElementById('payBan');
-    pb.className='pay-ban win show';
-    pb.innerHTML='💰 '+s2btc(myPending)+' BTC withdrawal initiated!';
-    myPending=0n; hide('btnWd');
-    fetchBalance(); setTimeout(refreshMyBet,5000);
-  } catch(e) { alert('Failed: '+e.message); b.disabled=false; }
+    await rpcWrite('withdraw()', [], 0);
+    const pb = document.getElementById('payBan');
+    pb.className = 'pay-ban win show'; pb.innerHTML = '💰 ' + s2btc(myPending) + ' BTC sent!';
+    myPending = 0n; hide('btnWd'); fetchBalance(); setTimeout(refreshMyBet, 5000);
+  } catch(e) { alert('Failed: ' + e.message); b.disabled = false; }
 }
-
 async function doNewRound() {
-  if (!wallet) return;
-  const b=document.getElementById('btnNew');
-  b.disabled=true; b.innerText='⏳ Starting...';
+  const b = document.getElementById('btnNew'); b.disabled = true; b.innerText = '⏳ Starting...';
   try {
-    await rpcWrite('startNewRound()',[],0);
-    document.getElementById('payBan').className='pay-ban';
-    document.getElementById('resBan').className='res-ban';
-    document.getElementById('hashBox').style.display='none';
-    myBet=null; myPending=0n;
-    document.getElementById('myBet').innerText='—';
-    hideAll(); setTimeout(refreshRound,5000);
-  } catch(e) { alert('Failed: '+e.message); b.disabled=false; b.innerText='▶ Start New Round'; }
+    await rpcWrite('startNewRound()', [], 0);
+    document.getElementById('payBan').className = 'pay-ban';
+    document.getElementById('resBan').className = 'res-ban';
+    document.getElementById('hashBox').style.display = 'none';
+    myBet = null; myPending = 0n; document.getElementById('myBet').innerText = '—';
+    hideAll(); setTimeout(refreshRound, 5000);
+  } catch(e) { alert('Failed: ' + e.message); b.disabled = false; b.innerText = '▶ Start New Round'; }
 }
 
-// ─── HELPERS ──────────────────────────────────────────────────────────────────
-function setPill(t,c){const e=document.getElementById('pill');e.innerText=t;e.className='pill '+c;}
-function show(id){const e=document.getElementById(id);if(e){e.style.display='block';e.disabled=false;}}
-function hide(id){const e=document.getElementById(id);if(e)e.style.display='none';}
-function hideAll(){['btnSettle','btnClaim','btnWd','btnNew'].forEach(hide);document.getElementById('payBan').className='pay-ban';}
-function showHashViz(ew){
-  document.getElementById('hashBox').style.display='block';
-  const n=ew?'c':'9';
-  document.getElementById('hashD').innerHTML=
-    '<span style="color:var(--m)">000000000000000000024b5f8e3da7c2f1a...</span>'+
-    '<span class="hash-last">'+n+'</span>';
-  const p=document.getElementById('hashPar');
-  p.innerHTML=ew?'🟢 EVEN ('+n+' = 12)':'🔴 ODD ('+n+' = 9)';
-  p.className='par '+(ew?'even':'odd');
-}
-
-// ─── PRICE WS ─────────────────────────────────────────────────────────────────
+// ─── PRICE ────────────────────────────────────────────────────────────────────
 function startPriceWS() {
-  const ws=new WebSocket('wss://stream.binance.com:9443/stream?streams=btcusdt@ticker');
-  ws.onmessage=e=>{
-    const t=JSON.parse(e.data).data; if(!t)return;
-    const p=parseFloat(t.c), ch=parseFloat(t.P);
-    lastPriceRaw=Math.round(p);
-    document.getElementById('chartPrice').innerText='$'+Math.round(p).toLocaleString();
-    const el=document.getElementById('chartChg');
-    el.innerText=(ch>=0?'+':'')+ch.toFixed(2)+'%';
-    el.className='chg '+(ch>=0?'pos':'neg');
+  const ws = new WebSocket('wss://stream.binance.com:9443/stream?streams=btcusdt@ticker');
+  ws.onmessage = e => {
+    const t = JSON.parse(e.data).data; if (!t) return;
+    const p = parseFloat(t.c), ch = parseFloat(t.P);
+    lastPrice = Math.round(p);
+    document.getElementById('chartPrice').innerText = '$' + Math.round(p).toLocaleString();
+    const el = document.getElementById('chartChg');
+    el.innerText = (ch >= 0 ? '+' : '') + ch.toFixed(2) + '%';
+    el.className = 'chg ' + (ch >= 0 ? 'pos' : 'neg');
   };
-  ws.onclose=()=>setTimeout(startPriceWS,3000);
-  ws.onerror=()=>ws.close();
+  ws.onclose = () => setTimeout(startPriceWS, 3000);
+  ws.onerror = () => ws.close();
 }
 
 // ─── TRADINGVIEW ──────────────────────────────────────────────────────────────
 new TradingView.widget({
-  container_id:'tv_chart',symbol:'BINANCE:BTCUSDT',interval:'1',
-  theme:'dark',width:'100%',height:'100%',autosize:true,
-  hide_side_toolbar:true,allow_symbol_change:false,toolbar_bg:'#050505',
-  overrides:{
-    "paneProperties.background":"#080d08","paneProperties.backgroundType":"solid",
-    "paneProperties.vertGridProperties.color":"rgba(247,147,26,0.04)",
-    "paneProperties.horzGridProperties.color":"rgba(247,147,26,0.04)",
-    "scalesProperties.textColor":"#555","scalesProperties.backgroundColor":"#050505",
+  container_id: 'tv_chart', symbol: 'BINANCE:BTCUSDT', interval: '1',
+  theme: 'dark', width: '100%', height: '100%', autosize: true,
+  hide_side_toolbar: true, allow_symbol_change: false, toolbar_bg: '#050505',
+  overrides: {
+    "paneProperties.background": "#080d08", "paneProperties.backgroundType": "solid",
+    "paneProperties.vertGridProperties.color": "rgba(247,147,26,0.04)",
+    "paneProperties.horzGridProperties.color": "rgba(247,147,26,0.04)",
+    "scalesProperties.textColor": "#555", "scalesProperties.backgroundColor": "#050505",
   },
-  loading_screen:{backgroundColor:"#080d08",foregroundColor:"#f7931a"},
+  loading_screen: { backgroundColor: "#080d08", foregroundColor: "#f7931a" },
 });
 
-// ─── INIT ──────────────────────────────────────────────────────────────────────
-startPriceWS();
-setSync();
-refreshRound();
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+startPriceWS(); setSync(); refreshRound();
 setInterval(refreshRound, 15000);
-setInterval(()=>{if(wallet)fetchBalance();}, 60000);
+setInterval(() => { if (wallet) fetchBalance(); }, 60000);
 
-// Restore session
-window.addEventListener('load',()=>{
-  if (!window.opnet) return;
-  window.opnet.getAccounts().then(async addrs=>{
-    if (!addrs?.length) return;
+// Session restore — retry until OPWallet injects window.opnet
+function tryRestoreSession(attempts) {
+  attempts = attempts || 0;
+  const opw = getOPWallet();
+  if (!opw) {
+    if (attempts < 15) setTimeout(() => tryRestoreSession(attempts + 1), 500);
+    return;
+  }
+  opw.getAccounts().then(async function(addrs) {
+    if (!addrs || !addrs.length) return;
     try {
-      const pk=await window.opnet.getPublicKey();
-      const addr=addrs[0];
-      wallet={address:addr,publicKey:pk};
-      opnetAddr=await sha256hex(pk);
-      const short=addr.slice(0,10)+'...'+addr.slice(-6);
-      document.getElementById('walletAddr').innerText=short;
-      const btn=document.getElementById('btnConn');
-      btn.innerHTML='<div class="wdot"></div>'+short;
-      btn.className='btn-conn on'; btn.onclick=null;
-      document.getElementById('btnDisc').style.display='flex';
+      const pk   = await opw.getPublicKey();
+      const addr = addrs[0];
+      wallet    = { address: addr, publicKey: pk };
+      opnetAddr = await sha256hex(pk);
+      const short = addr.slice(0,10) + '...' + addr.slice(-6);
+      document.getElementById('walletAddr').innerText = short;
+      const btn = document.getElementById('btnConn');
+      btn.innerHTML = '<div class="wdot"></div>' + short;
+      btn.className = 'btn-conn on'; btn.onclick = null;
+      document.getElementById('btnDisc').style.display = 'flex';
       updateBtns(); fetchBalance();
-      await refreshMyBet();
-      runAI();
-      window.opnet.on('disconnect',disconnectWallet);
-    } catch(e){console.warn('restore:',e.message);}
-  }).catch(()=>{});
-});
+      await refreshMyBet(); runAI();
+      opw.on && opw.on('disconnect', disconnectWallet);
+    } catch(e) { console.warn('restore:', e.message); }
+  }).catch(function() {});
+}
+window.addEventListener('load', function() { tryRestoreSession(0); });
 
 
 // ─── Graffiti background ──────────────────────────────────────────────────────
