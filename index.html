@@ -2,365 +2,777 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>BlockBet — Bitcoin L1 · OP_NET Regtest</title>
-<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet"/>
-<script src="https://s3.tradingview.com/tv.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800;900&display=swap" rel="stylesheet"/>
+<script src="https://s3.tradingview.com/tv.js">
+
+// ─── Graffiti background ──────────────────────────────────────────────────────
+(function() {
+  const canvas = document.getElementById('graffiti-bg');
+  const ctx = canvas.getContext('2d');
+  const NEON = '#f7931a';
+  const NEON2 = '#b8e530';
+  const WHITE = 'rgba(255,255,255,0.07)';
+  const DIM = 'rgba(247,147,26,0.08)';
+
+  function resize() {
+    canvas.width  = window.innerWidth;
+    canvas.height = window.innerHeight;
+    draw();
+  }
+
+  function randInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+  function rand(min, max) { return Math.random() * (max - min) + min; }
+
+  // Seeded random so it's consistent per session
+  let seed = 42;
+  function srnd() {
+    seed = (seed * 16807 + 0) % 2147483647;
+    return (seed - 1) / 2147483646;
+  }
+  function srandInt(min, max) { return Math.floor(srnd() * (max - min + 1)) + min; }
+  function srand(min, max) { return srnd() * (max - min) + min; }
+
+  function drawSprayPaint(ctx, x, y, radius, color, density = 60) {
+    ctx.save();
+    for (let i = 0; i < density; i++) {
+      const angle = srnd() * Math.PI * 2;
+      const r = Math.pow(srnd(), 0.5) * radius;
+      const px = x + Math.cos(angle) * r;
+      const py = y + Math.sin(angle) * r;
+      const alpha = srand(0.02, 0.18);
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(px, py, srand(0.5, 2.5), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawGraffitiLetter(ctx, x, y, letter, size, color, angle = 0) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+
+    // Outline / drip effect
+    ctx.font = `900 ${size}px 'Syne', sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // Spray halo
+    drawSprayPaint(ctx, 0, 0, size * 0.7, color, 80);
+
+    // Shadow layers for depth
+    ctx.shadowColor = color;
+    ctx.shadowBlur = size * 0.3;
+    ctx.globalAlpha = 0.06;
+    ctx.fillStyle = color;
+    ctx.fillText(letter, 3, 6);
+
+    // Outline stroke
+    ctx.globalAlpha = 0.18;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = size * 0.08;
+    ctx.lineJoin = 'round';
+    ctx.strokeText(letter, 0, 0);
+
+    // Fill
+    ctx.globalAlpha = 0.09;
+    ctx.fillStyle = color;
+    ctx.fillText(letter, 0, 0);
+
+    // Drip
+    const dripCount = srandInt(1, 3);
+    for (let d = 0; d < dripCount; d++) {
+      const dx = srand(-size * 0.3, size * 0.3);
+      const dripLen = srand(size * 0.2, size * 0.9);
+      const dripW = srand(2, 6);
+      ctx.globalAlpha = 0.12;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = dripW;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(dx, size * 0.4);
+      ctx.bezierCurveTo(
+        dx + srand(-8, 8), size * 0.5 + dripLen * 0.3,
+        dx + srand(-8, 8), size * 0.5 + dripLen * 0.7,
+        dx + srand(-4, 4), size * 0.4 + dripLen
+      );
+      ctx.stroke();
+      // Drip end blob
+      ctx.globalAlpha = 0.1;
+      ctx.beginPath();
+      ctx.arc(dx + srand(-4,4), size * 0.4 + dripLen, dripW * 1.5, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+    }
+
+    ctx.restore();
+  }
+
+  function drawTag(ctx, x, y, text, size, color, skew = 0) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.transform(1, 0, skew, 1, 0, 0);
+
+    const letters = text.split('');
+    let ox = 0;
+    for (const l of letters) {
+      const angle = srand(-0.15, 0.15);
+      const vertJitter = srand(-size * 0.15, size * 0.15);
+      drawGraffitiLetter(ctx, ox, vertJitter, l, size, color, angle);
+      ox += size * srand(0.55, 0.72);
+    }
+    ctx.restore();
+  }
+
+  function drawLine(ctx, x1, y1, x2, y2, color, width, alpha) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.lineCap = 'round';
+    ctx.shadowColor = color;
+    ctx.shadowBlur = width * 3;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawArrow(ctx, x, y, size, color) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(srand(-0.3, 0.3));
+    ctx.globalAlpha = 0.12;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = size * 0.08;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 10;
+    ctx.beginPath();
+    // Arrow up
+    ctx.moveTo(0, size * 0.5);
+    ctx.lineTo(0, -size * 0.5);
+    ctx.moveTo(-size * 0.3, -size * 0.2);
+    ctx.lineTo(0, -size * 0.5);
+    ctx.lineTo(size * 0.3, -size * 0.2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawHexagon(ctx, x, y, r, color) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(srand(0, Math.PI));
+    ctx.globalAlpha = srand(0.04, 0.1);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = srand(1, 4);
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const angle = (Math.PI / 3) * i;
+      const px = Math.cos(angle) * r;
+      const py = Math.sin(angle) * r;
+      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function draw() {
+    const W = canvas.width;
+    const H = canvas.height;
+    seed = 42; // reset seed for consistent render
+
+    ctx.clearRect(0, 0, W, H);
+
+    // ── Base: deep dark gradient (not pure black) ──
+    const bgGrad = ctx.createLinearGradient(0, 0, W, H);
+    bgGrad.addColorStop(0,   '#0d1a0a');
+    bgGrad.addColorStop(0.3, '#0a0f1a');
+    bgGrad.addColorStop(0.6, '#130d1f');
+    bgGrad.addColorStop(1,   '#0a1410');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, W, H);
+
+    // ── Ink splat blobs — big color explosions ──
+    const blobs = [
+      { x: W*0.08,  y: H*0.15, r: W*0.22, c: 'rgba(247,147,26,',  a: 0.13 },
+      { x: W*0.85,  y: H*0.75, r: W*0.28, c: 'rgba(247,147,26,',  a: 0.10 },
+      { x: W*0.5,   y: H*0.5,  r: W*0.35, c: 'rgba(74,222,128,',  a: 0.07 },
+      { x: W*0.9,   y: H*0.1,  r: W*0.18, c: 'rgba(248,113,113,', a: 0.10 },
+      { x: W*0.1,   y: H*0.85, r: W*0.20, c: 'rgba(248,113,113,', a: 0.08 },
+      { x: W*0.55,  y: H*0.2,  r: W*0.15, c: 'rgba(184,229,48,',  a: 0.09 },
+      { x: W*0.25,  y: H*0.55, r: W*0.12, c: 'rgba(247,147,26,',  a: 0.08 },
+      { x: W*0.75,  y: H*0.45, r: W*0.16, c: 'rgba(74,222,128,',  a: 0.08 },
+    ];
+
+    for (const b of blobs) {
+      // Radial splat
+      const g = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r);
+      g.addColorStop(0,   b.c + (b.a * 2.5) + ')');
+      g.addColorStop(0.4, b.c + b.a + ')');
+      g.addColorStop(0.75, b.c + (b.a * 0.3) + ')');
+      g.addColorStop(1,   b.c + '0)');
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Splatter droplets around blob
+      const color = b.c + (b.a * 3) + ')';
+      for (let s = 0; s < 18; s++) {
+        const angle = srnd() * Math.PI * 2;
+        const dist  = srand(b.r * 0.5, b.r * 1.6);
+        const sx = b.x + Math.cos(angle) * dist;
+        const sy = b.y + Math.sin(angle) * dist;
+        const sr2 = srand(2, b.r * 0.12);
+        ctx.globalAlpha = srand(0.05, 0.18);
+        ctx.fillStyle = b.c + (b.a * 4) + ')';
+        ctx.beginPath();
+        // Elongated splat drop
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.rotate(angle + Math.PI/2);
+        ctx.ellipse(0, 0, sr2 * 0.5, sr2, 0, 0, Math.PI * 2);
+        ctx.restore();
+        ctx.fill();
+      }
+    }
+
+    // ── Spray strokes — wide brush marks ──
+    const strokes = [
+      { x1: W*0.0,  y1: H*0.3,  x2: W*0.4,  y2: H*0.15, c: NEON,            w: 80 },
+      { x1: W*0.6,  y1: H*0.85, x2: W*1.0,  y2: H*0.65, c: NEON2,           w: 60 },
+      { x1: W*0.2,  y1: H*0.9,  x2: W*0.7,  y2: H*0.95, c: '#4ade80',       w: 50 },
+      { x1: W*0.7,  y1: H*0.0,  x2: W*0.95, y2: H*0.35, c: '#f87171',       w: 55 },
+      { x1: W*0.0,  y1: H*0.65, x2: W*0.25, y2: H*0.5,  c: NEON,            w: 40 },
+    ];
+
+    for (const s of strokes) {
+      const sg = ctx.createLinearGradient(s.x1, s.y1, s.x2, s.y2);
+      sg.addColorStop(0,   s.c + '00');
+      sg.addColorStop(0.3, s.c + '22');
+      sg.addColorStop(0.5, s.c + '18');
+      sg.addColorStop(1,   s.c + '00');
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = sg;
+      ctx.lineWidth = s.w;
+      ctx.lineCap = 'round';
+      ctx.shadowColor = s.c;
+      ctx.shadowBlur = s.w * 0.8;
+      ctx.beginPath();
+      ctx.moveTo(s.x1, s.y1);
+      const mx = (s.x1 + s.x2) / 2 + srand(-W*0.1, W*0.1);
+      const my = (s.y1 + s.y2) / 2 + srand(-H*0.1, H*0.1);
+      ctx.quadraticCurveTo(mx, my, s.x2, s.y2);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+    }
+
+    // ── Concrete texture: noise ──
+    for (let i = 0; i < 4000; i++) {
+      ctx.globalAlpha = srand(0.01, 0.05);
+      ctx.fillStyle = srnd() > 0.6 ? '#ffffff' : (srnd() > 0.5 ? NEON : '#333');
+      const px = srnd() * W, py = srnd() * H;
+      ctx.fillRect(px, py, srand(0.5, 2), srand(0.5, 2));
+    }
+
+    // Big background tags - words scattered
+    const words = ['BLOCKBET', 'UP', 'DOWN', 'BTC', 'BITCOIN', 'WIN', 'CHAIN', '0x'];
+    const colors = [NEON, NEON2, 'rgba(255,255,255,0.6)', NEON];
+
+    // Large background word
+    drawTag(ctx, W * 0.02, H * 0.18, 'BLOCKBET', Math.min(W * 0.075, 90), NEON, -0.05);
+    drawTag(ctx, W * 0.55, H * 0.72, 'OPNET', Math.min(W * 0.065, 80), NEON2, 0.04);
+    drawTag(ctx, W * 0.05, H * 0.82, 'BTC', Math.min(W * 0.1, 120), NEON, -0.08);
+    drawTag(ctx, W * 0.6, H * 0.12, 'BITCOIN', Math.min(W * 0.055, 70), 'rgba(255,255,255,0.5)', 0.06);
+    drawTag(ctx, W * 0.3, H * 0.45, 'WIN', Math.min(W * 0.12, 140), NEON2, -0.03);
+    drawTag(ctx, W * 0.7, H * 0.38, '0xCHAIN', Math.min(W * 0.045, 55), NEON, 0.03);
+    drawTag(ctx, W * 0.15, H * 0.6, 'UP', Math.min(W * 0.09, 110), NEON, 0.05);
+    drawTag(ctx, W * 0.75, H * 0.6, 'DOWN', Math.min(W * 0.07, 85), '#f87171', -0.04);
+
+    // Hexagons (blockchain motif)
+    for (let i = 0; i < 18; i++) {
+      drawHexagon(ctx, srnd() * W, srnd() * H, srand(20, 90), i % 3 === 0 ? NEON : NEON2);
+    }
+
+    // Arrows (UP / DOWN arrows)
+    for (let i = 0; i < 12; i++) {
+      drawArrow(ctx, srnd() * W, srnd() * H, srand(30, 80), srnd() > 0.5 ? NEON : '#f87171');
+    }
+
+    // Scratchy tag lines
+    for (let i = 0; i < 25; i++) {
+      const x1 = srnd() * W, y1 = srnd() * H;
+      const x2 = x1 + srand(-200, 200), y2 = y1 + srand(-80, 80);
+      drawLine(ctx, x1, y1, x2, y2, srnd() > 0.7 ? NEON : 'rgba(255,255,255,0.3)', srand(0.5, 3), srand(0.02, 0.07));
+    }
+
+    // Spray circles (random spots)
+    for (let i = 0; i < 20; i++) {
+      drawSprayPaint(ctx, srnd() * W, srnd() * H, srand(30, 120), srnd() > 0.5 ? NEON : NEON2, 40);
+    }
+
+    // Semi-transparent dark overlay so UI stays readable
+    ctx.globalAlpha = 0.55;
+    ctx.fillStyle = '#080808';
+    ctx.fillRect(0, 0, W, H);
+
+    // Vignette edges
+    const vignette = ctx.createRadialGradient(W/2, H/2, H*0.2, W/2, H/2, H);
+    vignette.addColorStop(0,   'rgba(0,0,0,0)');
+    vignette.addColorStop(0.7, 'rgba(0,0,0,0.2)');
+    vignette.addColorStop(1,   'rgba(0,0,0,0.75)');
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = vignette;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  window.addEventListener('resize', resize);
+  // Wait for Syne font to load for text rendering
+  document.fonts.ready.then(resize);
+  resize();
+})();
+</script>
 <style>
-:root {
-  --btc:#f7931a; --btc-dim:rgba(247,147,26,0.12); --btc-dim2:rgba(247,147,26,0.06);
-  --neon:#d5fd51; --neon-dim:rgba(213,253,81,0.12);
-  --black:#0a0a0a; --surface:#111; --surface2:#181818; --border:#2a2a2a; --border2:#333;
-  --text:#fff; --muted:#666; --dim:#444;
-  --even:#4ade80; --odd:#f87171;
-  --even-dim:rgba(74,222,128,0.10); --odd-dim:rgba(248,113,113,0.10);
+:root{
+  --btc:#f7931a;--btc-dim:rgba(247,147,26,.12);--btc-glow:rgba(247,147,26,.06);
+  --neon:#d5fd51;--neon-dim:rgba(213,253,81,.12);
+  --bg:#080d08;--s1:#111;--s2:#161616;--s3:#1c1c1c;
+  --b1:#2a2a2a;--b2:#333;--text:#fff;--m:#666;--dim:#3a3a3a;
+  --even:#4ade80;--odd:#f87171;
+  --ed:rgba(74,222,128,.10);--od:rgba(248,113,113,.10);
+  --ai:#a78bfa;--ai-dim:rgba(167,139,250,.10);
 }
 *{margin:0;padding:0;box-sizing:border-box;}
-body{background:#080d08;color:var(--text);font-family:'DM Mono',monospace;min-height:100vh;overflow-x:hidden;}
-#graffiti-bg{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:0;}
-.page{position:relative;z-index:1;display:flex;flex-direction:column;height:100vh;}
+html,body{height:100%;overflow:hidden;}
+body{background:var(--bg);color:var(--text);font-family:'DM Mono',monospace;font-size:12px;}
+#graffiti-bg{position:fixed;inset:0;pointer-events:none;z-index:0;}
+.app{position:relative;z-index:1;display:flex;flex-direction:column;height:100vh;}
 
-/* ── Header ── */
-.hdr{display:flex;align-items:center;justify-content:space-between;padding:10px 20px;
-  border-bottom:1px solid var(--border);background:rgba(8,8,8,0.97);backdrop-filter:blur(16px);flex-shrink:0;z-index:100;}
-.logo{display:flex;align-items:center;gap:10px;}
-.logo-hex{width:30px;height:30px;background:var(--btc);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);
-  display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:900;color:#000;
-  animation:hexglow 3s ease-in-out infinite;}
-@keyframes hexglow{0%,100%{filter:brightness(1);}50%{filter:brightness(1.5) drop-shadow(0 0 12px #f7931a);}}
-.logo-name{font-family:'Syne',sans-serif;font-weight:800;font-size:16px;letter-spacing:-0.5px;}
-.logo-name span{color:var(--btc);}
-.logo-sub{font-size:9px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-top:-2px;}
-.hdr-right{display:flex;align-items:center;gap:8px;flex-wrap:nowrap;}
-.net-badge{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--btc);
-  border:1px solid rgba(247,147,26,0.35);padding:5px 10px;border-radius:4px;
-  background:var(--btc-dim);letter-spacing:1px;text-transform:uppercase;white-space:nowrap;}
-.net-dot{width:6px;height:6px;border-radius:50%;background:var(--btc);animation:blink 2s infinite;}
-@keyframes blink{0%,100%{opacity:1;}50%{opacity:0.2;}}
-.btn-faucet{background:transparent;color:var(--neon);border:1px solid rgba(213,253,81,0.35);
-  padding:7px 12px;border-radius:6px;font-family:'DM Mono',monospace;font-size:11px;
-  cursor:pointer;text-decoration:none;transition:all 0.2s;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;}
-.btn-faucet:hover{background:var(--neon-dim);border-color:var(--neon);}
+/* ── HEADER ── */
+.hdr{display:flex;align-items:center;justify-content:space-between;
+  padding:8px 18px;border-bottom:1px solid var(--b1);
+  background:rgba(5,5,5,.98);backdrop-filter:blur(20px);flex-shrink:0;z-index:200;}
+.logo{display:flex;align-items:center;gap:9px;}
+.logo-hex{width:28px;height:28px;background:var(--btc);
+  clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);
+  display:flex;align-items:center;justify-content:center;
+  font-size:13px;font-weight:900;color:#000;animation:hglow 3s ease-in-out infinite;}
+@keyframes hglow{0%,100%{filter:brightness(1);}50%{filter:brightness(1.6) drop-shadow(0 0 10px #f7931a);}}
+.logo-txt{font-family:'Syne',sans-serif;font-weight:900;font-size:15px;letter-spacing:-.5px;}
+.logo-txt span{color:var(--btc);}
+.logo-sub{font-size:8px;color:var(--m);letter-spacing:2px;text-transform:uppercase;margin-top:-1px;}
 
-/* Connect button states */
-.btn-connect{padding:7px 16px;border-radius:6px;font-family:'DM Mono',monospace;font-size:11px;
-  font-weight:500;cursor:pointer;transition:all 0.2s;border:none;white-space:nowrap;}
-.btn-connect.disconnected{background:var(--btc);color:#000;}
-.btn-connect.disconnected:hover{background:#e8841a;}
-.btn-connect.connected{background:var(--surface2);color:var(--btc);
-  border:1px solid rgba(247,147,26,0.4);cursor:default;padding-right:8px;
-  display:flex;align-items:center;gap:6px;}
-.wallet-dot{width:7px;height:7px;border-radius:50%;background:var(--even);flex-shrink:0;
-  box-shadow:0 0 6px var(--even);animation:walletpulse 2s infinite;}
-@keyframes walletpulse{0%,100%{opacity:1;}50%{opacity:0.5;}}
-.btn-disconnect{background:transparent;color:var(--muted);border:1px solid var(--border);
-  padding:7px 10px;border-radius:6px;font-family:'DM Mono',monospace;font-size:11px;
-  cursor:pointer;transition:all 0.2s;display:none;white-space:nowrap;}
-.btn-disconnect:hover{border-color:var(--odd);color:var(--odd);}
+.hdr-right{display:flex;align-items:center;gap:7px;}
+.badge{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--btc);
+  border:1px solid rgba(247,147,26,.3);padding:4px 9px;border-radius:4px;
+  background:var(--btc-dim);letter-spacing:1px;text-transform:uppercase;}
+.bdot{width:6px;height:6px;border-radius:50%;background:var(--btc);animation:blink 2s infinite;}
+@keyframes blink{0%,100%{opacity:1;}50%{opacity:.15;}}
 
-/* Status banner */
-.status-bar{padding:6px 20px;font-size:11px;display:flex;align-items:center;justify-content:center;
-  gap:14px;flex-shrink:0;border-bottom:1px solid;}
-.status-bar.ok{background:rgba(74,222,128,0.06);border-color:rgba(74,222,128,0.15);color:var(--even);}
-.status-bar.warn{background:rgba(247,147,26,0.07);border-color:rgba(247,147,26,0.2);color:var(--btc);}
-.status-bar code{color:var(--btc);font-size:10px;}
+.btn-faucet{background:transparent;color:var(--neon);border:1px solid rgba(213,253,81,.3);
+  padding:6px 11px;border-radius:5px;font-family:'DM Mono',monospace;font-size:10px;
+  cursor:pointer;text-decoration:none;transition:all .2s;display:inline-flex;align-items:center;gap:4px;}
+.btn-faucet:hover{background:var(--neon-dim);}
 
-/* ── Layout ── */
-.layout{display:grid;grid-template-columns:1fr 430px;flex:1;overflow:hidden;min-height:0;}
+.btn-conn{padding:6px 14px;border-radius:5px;font-family:'DM Mono',monospace;font-size:10px;
+  font-weight:500;cursor:pointer;transition:all .2s;border:none;white-space:nowrap;}
+.btn-conn.off{background:var(--btc);color:#000;}
+.btn-conn.off:hover{background:#e8841a;}
+.btn-conn.on{background:var(--s2);color:var(--btc);
+  border:1px solid rgba(247,147,26,.4);display:flex;align-items:center;gap:6px;}
+.wdot{width:7px;height:7px;border-radius:50%;background:var(--even);
+  box-shadow:0 0 6px var(--even);animation:wpulse 2s infinite;flex-shrink:0;}
+@keyframes wpulse{0%,100%{opacity:1;}50%{opacity:.4;}}
+.btn-disc{background:transparent;color:var(--m);border:1px solid var(--b1);
+  padding:6px 10px;border-radius:5px;font-family:'DM Mono',monospace;font-size:10px;
+  cursor:pointer;transition:all .2s;display:none;white-space:nowrap;}
+.btn-disc:hover{border-color:var(--odd);color:var(--odd);}
+
+/* ── STATUS BAR ── */
+.sbar{padding:5px 18px;font-size:10px;display:flex;align-items:center;justify-content:center;
+  gap:12px;flex-shrink:0;border-bottom:1px solid;}
+.sbar.ok{background:rgba(74,222,128,.05);border-color:rgba(74,222,128,.12);color:var(--even);}
+.sbar.warn{background:rgba(247,147,26,.06);border-color:rgba(247,147,26,.18);color:var(--btc);}
+.sbar.err{background:rgba(248,113,113,.05);border-color:rgba(248,113,113,.15);color:var(--odd);}
+.sbar code{font-size:9px;opacity:.7;}
+
+/* ── LAYOUT ── */
+.body{display:grid;grid-template-columns:1fr 420px;flex:1;overflow:hidden;min-height:0;}
 
 /* Chart */
-.chart-col{display:flex;flex-direction:column;border-right:1px solid var(--border);overflow:hidden;position:relative;}
-.chart-hdr{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;
-  background:rgba(8,8,8,0.9);border-bottom:1px solid rgba(247,147,26,0.12);flex-shrink:0;backdrop-filter:blur(8px);}
-.chart-coin{font-family:'Syne',sans-serif;font-size:16px;font-weight:800;display:flex;align-items:center;gap:8px;}
-.chart-price{font-size:22px;font-family:'Syne',sans-serif;font-weight:800;color:var(--btc);}
-.chg{font-size:12px;padding:2px 8px;border-radius:4px;}
-.chg.pos{background:var(--even-dim);color:var(--even);}
-.chg.neg{background:var(--odd-dim);color:var(--odd);}
+.chart-col{display:flex;flex-direction:column;border-right:1px solid var(--b1);overflow:hidden;}
+.chart-hdr{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;
+  background:rgba(5,5,5,.92);border-bottom:1px solid rgba(247,147,26,.1);flex-shrink:0;}
+.chart-sym{font-family:'Syne',sans-serif;font-size:15px;font-weight:800;
+  display:flex;align-items:center;gap:7px;}
+.chart-price{font-size:20px;font-family:'Syne',sans-serif;font-weight:900;color:var(--btc);}
+.chg{font-size:11px;padding:2px 7px;border-radius:3px;}
+.chg.pos{background:var(--ed);color:var(--even);}
+.chg.neg{background:var(--od);color:var(--odd);}
 .chart-wrap{flex:1;min-height:0;position:relative;}
 #tv_chart{width:100%;height:100%;}
-.chart-wrap::before{content:'';position:absolute;top:0;left:0;width:50px;height:50px;
-  border-top:2px solid var(--btc);border-left:2px solid var(--btc);opacity:0.4;z-index:3;pointer-events:none;}
-.chart-wrap::after{content:'';position:absolute;bottom:0;right:0;width:50px;height:50px;
-  border-bottom:2px solid var(--btc);border-right:2px solid var(--btc);opacity:0.4;z-index:3;pointer-events:none;}
-.chart-c-tr{position:absolute;top:0;right:0;width:50px;height:50px;
-  border-top:2px solid var(--btc);border-right:2px solid var(--btc);opacity:0.4;z-index:3;pointer-events:none;}
-.chart-c-bl{position:absolute;bottom:0;left:0;width:50px;height:50px;
-  border-bottom:2px solid var(--btc);border-left:2px solid var(--btc);opacity:0.4;z-index:3;pointer-events:none;}
-.chart-glow{position:absolute;inset:0;box-shadow:inset 0 0 1px rgba(247,147,26,0.18);pointer-events:none;z-index:2;}
+.chart-wrap::before{content:'';position:absolute;top:0;left:0;width:46px;height:46px;
+  border-top:2px solid var(--btc);border-left:2px solid var(--btc);opacity:.35;z-index:3;pointer-events:none;}
+.chart-wrap::after{content:'';position:absolute;bottom:0;right:0;width:46px;height:46px;
+  border-bottom:2px solid var(--btc);border-right:2px solid var(--btc);opacity:.35;z-index:3;pointer-events:none;}
+.ctr{position:absolute;top:0;right:0;width:46px;height:46px;
+  border-top:2px solid var(--btc);border-right:2px solid var(--btc);opacity:.35;z-index:3;pointer-events:none;}
+.cbl{position:absolute;bottom:0;left:0;width:46px;height:46px;
+  border-bottom:2px solid var(--btc);border-left:2px solid var(--btc);opacity:.35;z-index:3;pointer-events:none;}
 
 /* Right panel */
-.panel{display:flex;flex-direction:column;overflow-y:auto;background:rgba(8,8,8,0.65);backdrop-filter:blur(10px);}
+.panel{display:flex;flex-direction:column;overflow-y:auto;
+  background:rgba(5,5,5,.7);backdrop-filter:blur(12px);}
+.panel::-webkit-scrollbar{width:3px;}
+.panel::-webkit-scrollbar-thumb{background:var(--b2);border-radius:2px;}
 
-/* Round info */
-.round-box{background:rgba(15,15,15,0.97);border-bottom:1px solid var(--border);padding:14px 16px;flex-shrink:0;}
-.round-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
-.rlabel{font-size:9px;color:var(--muted);letter-spacing:1.5px;text-transform:uppercase;}
-.rval{font-size:13px;color:var(--text);margin-top:2px;}
-.rval.btc{color:var(--btc);}
-.rval.neon{color:var(--neon);}
-.pill{font-size:9px;font-weight:600;padding:3px 10px;border-radius:20px;letter-spacing:1px;text-transform:uppercase;}
-.pill-open{background:var(--even-dim);color:var(--even);border:1px solid rgba(74,222,128,0.3);}
-.pill-pending{background:var(--btc-dim);color:var(--btc);border:1px solid rgba(247,147,26,0.3);}
-.pill-settled{background:var(--neon-dim);color:var(--neon);border:1px solid rgba(213,253,81,0.3);}
-.pill-sync{background:rgba(100,100,100,0.1);color:var(--muted);border:1px solid var(--border);}
+/* Round box */
+.round-box{background:rgba(12,12,12,.98);border-bottom:1px solid var(--b1);padding:12px 14px;flex-shrink:0;}
+.row2{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+.fld{} .fld-l{font-size:8px;color:var(--m);letter-spacing:1.5px;text-transform:uppercase;}
+.fld-v{font-size:12px;color:var(--text);margin-top:1px;}
+.fld-v.btc{color:var(--btc);}
+.fld-v.neon{color:var(--neon);}
+.fld-v.even{color:var(--even);}
+.pill{font-size:8px;font-weight:600;padding:3px 9px;border-radius:20px;letter-spacing:1px;text-transform:uppercase;}
+.p-open{background:var(--ed);color:var(--even);border:1px solid rgba(74,222,128,.3);}
+.p-pend{background:var(--btc-dim);color:var(--btc);border:1px solid rgba(247,147,26,.3);}
+.p-sett{background:var(--neon-dim);color:var(--neon);border:1px solid rgba(213,253,81,.3);}
+.p-sync{background:rgba(80,80,80,.1);color:var(--m);border:1px solid var(--b1);}
 
-/* Pool bar */
-.pool-labels{display:flex;justify-content:space-between;font-size:10px;margin-bottom:5px;}
-.lbl-even{color:var(--even);}
-.lbl-odd{color:var(--odd);}
-.pool-track{height:7px;background:var(--odd-dim);border-radius:4px;overflow:hidden;border:1px solid var(--border);}
-.pool-fill{height:100%;background:linear-gradient(90deg,var(--even),#22c55e);border-radius:4px;transition:width 0.5s ease;}
-
-.sg{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:10px;}
-.si{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;}
-.si-l{font-size:9px;color:var(--muted);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:3px;}
-.si-v{font-size:12px;color:var(--text);}
+.pool-lbl{display:flex;justify-content:space-between;font-size:9px;margin-bottom:4px;}
+.pool-track{height:6px;background:var(--od);border-radius:3px;overflow:hidden;border:1px solid var(--b1);}
+.pool-fill{height:100%;background:linear-gradient(90deg,var(--even),#22c55e);border-radius:3px;transition:width .5s;}
+.sg{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:9px;}
+.si{background:var(--s2);border:1px solid var(--b1);border-radius:5px;padding:7px 9px;}
+.si-l{font-size:8px;color:var(--m);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:2px;}
+.si-v{font-size:11px;color:var(--text);}
 .si-v.btc{color:var(--btc);}
 .si-v.neon{color:var(--neon);}
 .si-v.even{color:var(--even);}
+.res-ban{display:none;padding:8px;border-radius:5px;margin-top:8px;
+  text-align:center;font-family:'Syne',sans-serif;font-weight:700;font-size:12px;}
+.res-ban.ew{background:var(--ed);border:1px solid rgba(74,222,128,.3);color:var(--even);}
+.res-ban.ow{background:var(--od);border:1px solid rgba(248,113,113,.3);color:var(--odd);}
+.res-ban.show{display:block;}
 
-/* Result banner */
-.res-banner{display:none;padding:10px;border-radius:6px;margin-top:10px;
-  text-align:center;font-family:'Syne',sans-serif;font-weight:700;font-size:13px;}
-.res-banner.even-w{background:var(--even-dim);border:1px solid rgba(74,222,128,0.3);color:var(--even);}
-.res-banner.odd-w{background:var(--odd-dim);border:1px solid rgba(248,113,113,0.3);color:var(--odd);}
-.res-banner.show{display:block;}
+/* ── AI AGENT ── */
+.ai-box{background:rgba(12,12,12,.98);border-bottom:1px solid var(--b1);padding:10px 14px;flex-shrink:0;}
+.ai-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
+.ai-title{display:flex;align-items:center;gap:6px;font-size:9px;color:var(--ai);
+  letter-spacing:2px;text-transform:uppercase;}
+.ai-dot{width:6px;height:6px;border-radius:50%;background:var(--ai);animation:aipulse 2s infinite;}
+@keyframes aipulse{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(167,139,250,.4);}
+  50%{opacity:.6;box-shadow:0 0 0 4px rgba(167,139,250,0);}}
+.ai-toggle{background:transparent;border:1px solid rgba(167,139,250,.3);color:var(--ai);
+  padding:3px 9px;border-radius:20px;font-family:'DM Mono',monospace;font-size:9px;
+  cursor:pointer;transition:all .2s;letter-spacing:.5px;}
+.ai-toggle:hover{background:var(--ai-dim);}
+.ai-toggle.off{border-color:var(--b1);color:var(--m);}
+.ai-body{display:flex;flex-direction:column;gap:6px;}
+.ai-bars{display:grid;grid-template-columns:1fr 1fr;gap:6px;}
+.ai-bar-wrap{}
+.ai-bar-lbl{display:flex;justify-content:space-between;font-size:9px;margin-bottom:3px;}
+.ai-bar-lbl span:first-child{color:var(--m);}
+.ai-bar-lbl span:last-child{font-weight:600;}
+.ai-bar-lbl span.ev{color:var(--even);}
+.ai-bar-lbl span.od{color:var(--odd);}
+.ai-bar-track{height:5px;background:var(--dim);border-radius:3px;overflow:hidden;}
+.ai-bar-fill{height:100%;border-radius:3px;transition:width .8s cubic-bezier(.4,0,.2,1);}
+.ai-bar-fill.ev{background:linear-gradient(90deg,#22c55e,var(--even));}
+.ai-bar-fill.od{background:linear-gradient(90deg,var(--odd),#ef4444);}
+.ai-verdict{display:flex;align-items:center;justify-content:space-between;
+  padding:6px 9px;background:var(--s2);border:1px solid var(--b1);border-radius:5px;}
+.ai-rec{font-family:'Syne',sans-serif;font-weight:700;font-size:11px;}
+.ai-rec.even{color:var(--even);}
+.ai-rec.odd{color:var(--odd);}
+.ai-rec.neutral{color:var(--m);}
+.ai-conf{font-size:9px;color:var(--m);}
+.ai-thinking{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--ai);padding:4px 0;}
+.ai-spinner{width:10px;height:10px;border:1.5px solid rgba(167,139,250,.2);
+  border-top-color:var(--ai);border-radius:50%;animation:spin .8s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+.ai-disabled{text-align:center;padding:8px;color:var(--m);font-size:10px;}
 
 /* Bet form */
-.bet-form{padding:14px 16px;border-bottom:1px solid var(--border);flex-shrink:0;}
-.sec-title{font-size:9px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;}
-.amt-wrap{position:relative;margin-bottom:14px;}
-.amt-input{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;
-  padding:12px 52px 12px 14px;font-family:'DM Mono',monospace;font-size:18px;color:var(--text);
-  outline:none;transition:border-color 0.2s;}
-.amt-input:focus{border-color:var(--btc);}
-.amt-input::placeholder{color:var(--dim);}
-.amt-sfx{position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--btc);}
-.bet-btns{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;}
-.btn-even,.btn-odd{padding:16px 8px;border:none;border-radius:10px;font-family:'Syne',sans-serif;
-  font-size:15px;font-weight:800;cursor:pointer;transition:all 0.2s;
+.bet-form{padding:12px 14px;border-bottom:1px solid var(--b1);flex-shrink:0;}
+.sec-t{font-size:8px;color:var(--m);letter-spacing:2px;text-transform:uppercase;margin-bottom:9px;}
+.amt-wrap{position:relative;margin-bottom:12px;}
+.amt-in{width:100%;background:var(--s2);border:1px solid var(--b1);border-radius:7px;
+  padding:11px 48px 11px 12px;font-family:'DM Mono',monospace;font-size:17px;
+  color:var(--text);outline:none;transition:border-color .2s;}
+.amt-in:focus{border-color:var(--btc);}
+.amt-in::placeholder{color:var(--dim);}
+.amt-sfx{position:absolute;right:11px;top:50%;transform:translateY(-50%);font-size:10px;color:var(--btc);}
+.bet-row{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:8px;}
+.bev,.bod{padding:14px 6px;border:none;border-radius:9px;font-family:'Syne',sans-serif;
+  font-size:14px;font-weight:800;cursor:pointer;transition:all .2s;
   display:flex;flex-direction:column;align-items:center;gap:3px;}
-.btn-even{background:var(--even-dim);color:var(--even);border:1px solid rgba(74,222,128,0.3);}
-.btn-even:hover:not(:disabled){background:var(--even);color:#000;transform:translateY(-2px);box-shadow:0 6px 20px rgba(74,222,128,0.25);}
-.btn-odd{background:var(--odd-dim);color:var(--odd);border:1px solid rgba(248,113,113,0.3);}
-.btn-odd:hover:not(:disabled){background:var(--odd);color:#000;transform:translateY(-2px);box-shadow:0 6px 20px rgba(248,113,113,0.25);}
-.btn-even:disabled,.btn-odd:disabled{opacity:0.3;cursor:not-allowed;transform:none;}
-.btn-sub{font-size:9px;font-weight:400;opacity:0.7;letter-spacing:0.5px;}
-#betHint{text-align:center;font-size:10px;min-height:16px;margin-bottom:8px;color:var(--muted);}
-
-/* Action buttons */
-.act-btn{width:100%;padding:11px;border-radius:8px;font-family:'DM Mono',monospace;font-size:12px;
-  cursor:pointer;transition:all 0.2s;margin-bottom:7px;display:none;font-weight:500;letter-spacing:0.5px;}
-.act-btn:disabled{opacity:0.4;cursor:not-allowed;}
-.btn-settle{background:rgba(247,147,26,0.1);border:1px solid rgba(247,147,26,0.3);color:var(--btc);}
-.btn-settle:hover:not(:disabled){background:var(--btc);color:#000;}
-.btn-claim{background:var(--even-dim);border:1px solid rgba(74,222,128,0.3);color:var(--even);}
-.btn-claim:hover:not(:disabled){background:var(--even);color:#000;}
-.btn-withdraw{background:var(--neon-dim);border:1px solid rgba(213,253,81,0.3);color:var(--neon);}
-.btn-withdraw:hover:not(:disabled){background:var(--neon);color:#000;}
-.btn-newround{background:rgba(80,80,80,0.1);border:1px solid var(--border);color:var(--muted);}
-.btn-newround:hover{border-color:var(--btc);color:var(--btc);}
-
-/* Payout banner */
-.pay-banner{display:none;padding:12px 14px;border-radius:8px;margin-bottom:8px;
-  text-align:center;font-family:'Syne',sans-serif;font-weight:700;font-size:14px;}
-.pay-banner.win{background:var(--even-dim);border:1px solid rgba(74,222,128,0.4);color:var(--even);}
-.pay-banner.lose{background:var(--odd-dim);border:1px solid rgba(248,113,113,0.3);color:var(--odd);}
-.pay-banner.show{display:block;animation:fadeUp 0.4s ease;}
-@keyframes fadeUp{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
-
-/* How it works */
-.how-box{padding:14px 16px;}
-.how-title{font-size:9px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;}
-.how-steps{display:flex;flex-direction:column;gap:5px;}
-.how-step{display:flex;align-items:flex-start;gap:8px;padding:8px 10px;
-  background:var(--surface2);border:1px solid var(--border);border-radius:6px;}
-.how-n{width:18px;height:18px;border-radius:50%;background:var(--btc-dim);border:1px solid rgba(247,147,26,0.3);
-  color:var(--btc);font-size:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;}
-.how-t{font-size:10px;color:var(--muted);line-height:1.5;}
-.how-t strong{color:var(--text);}
+.bev{background:var(--ed);color:var(--even);border:1px solid rgba(74,222,128,.3);}
+.bev:hover:not(:disabled){background:var(--even);color:#000;transform:translateY(-2px);
+  box-shadow:0 5px 18px rgba(74,222,128,.22);}
+.bod{background:var(--od);color:var(--odd);border:1px solid rgba(248,113,113,.3);}
+.bod:hover:not(:disabled){background:var(--odd);color:#000;transform:translateY(-2px);
+  box-shadow:0 5px 18px rgba(248,113,113,.22);}
+.bev:disabled,.bod:disabled{opacity:.3;cursor:not-allowed;transform:none;}
+.bsub{font-size:8px;font-weight:400;opacity:.7;letter-spacing:.3px;}
+#betHint{text-align:center;font-size:10px;min-height:15px;margin-bottom:7px;color:var(--m);}
+.act{width:100%;padding:10px;border-radius:7px;font-family:'DM Mono',monospace;font-size:11px;
+  cursor:pointer;transition:all .2s;margin-bottom:6px;display:none;letter-spacing:.3px;}
+.act:disabled{opacity:.4;cursor:not-allowed;}
+.a-settle{background:var(--btc-dim);border:1px solid rgba(247,147,26,.3);color:var(--btc);}
+.a-settle:hover:not(:disabled){background:var(--btc);color:#000;}
+.a-claim{background:var(--ed);border:1px solid rgba(74,222,128,.3);color:var(--even);}
+.a-claim:hover:not(:disabled){background:var(--even);color:#000;}
+.a-wd{background:var(--neon-dim);border:1px solid rgba(213,253,81,.3);color:var(--neon);}
+.a-wd:hover:not(:disabled){background:var(--neon);color:#000;}
+.a-new{background:rgba(60,60,60,.1);border:1px solid var(--b1);color:var(--m);}
+.a-new:hover{border-color:var(--btc);color:var(--btc);}
+.pay-ban{display:none;padding:10px 12px;border-radius:7px;margin-bottom:7px;
+  text-align:center;font-family:'Syne',sans-serif;font-weight:700;font-size:13px;}
+.pay-ban.win{background:var(--ed);border:1px solid rgba(74,222,128,.4);color:var(--even);}
+.pay-ban.show{display:block;animation:fup .4s ease;}
+@keyframes fup{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:translateY(0);}}
 
 /* Hash viz */
-.hash-box{padding:12px 16px;border-bottom:1px solid var(--border);display:none;}
-.hash-title{font-size:9px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:7px;}
-.hash-display{background:var(--surface2);border:1px solid var(--border);border-radius:6px;
-  padding:9px 11px;font-size:10px;word-break:break-all;line-height:1.6;color:var(--muted);}
-.hash-last{color:var(--btc);font-weight:700;font-size:14px;}
-.hash-parity{display:flex;align-items:center;justify-content:space-between;margin-top:7px;font-size:11px;}
-.parity.even{color:var(--even);font-weight:600;}
-.parity.odd{color:var(--odd);font-weight:600;}
+.hash-box{padding:10px 14px;border-bottom:1px solid var(--b1);display:none;}
+.hash-t{font-size:8px;color:var(--m);letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;}
+.hash-d{background:var(--s2);border:1px solid var(--b1);border-radius:5px;
+  padding:8px 10px;font-size:9px;word-break:break-all;line-height:1.6;color:var(--m);}
+.hash-last{color:var(--btc);font-weight:700;font-size:13px;}
+.hash-par{display:flex;align-items:center;justify-content:space-between;margin-top:6px;font-size:10px;}
+.par.even{color:var(--even);font-weight:600;}
+.par.odd{color:var(--odd);font-weight:600;}
+
+/* How it works */
+.how-box{padding:12px 14px;}
+.how-t{font-size:8px;color:var(--m);letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;}
+.how-steps{display:flex;flex-direction:column;gap:4px;}
+.step{display:flex;align-items:flex-start;gap:7px;padding:7px 9px;
+  background:var(--s2);border:1px solid var(--b1);border-radius:5px;}
+.sn{width:16px;height:16px;border-radius:50%;background:var(--btc-dim);
+  border:1px solid rgba(247,147,26,.3);color:var(--btc);font-size:8px;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;}
+.st{font-size:9px;color:var(--m);line-height:1.5;}
+.st strong{color:var(--text);}
 
 @media(max-width:900px){
-  .layout{grid-template-columns:1fr;grid-template-rows:280px 1fr;}
-  .chart-col{border-right:none;border-bottom:1px solid var(--border);}
+  .body{grid-template-columns:1fr;grid-template-rows:260px 1fr;}
+  .chart-col{border-right:none;border-bottom:1px solid var(--b1);}
 }
 </style>
 </head>
 <body>
 <canvas id="graffiti-bg"></canvas>
-<div class="page">
+<div class="app">
 
-  <!-- Header -->
-  <header class="hdr">
-    <div class="logo">
-      <div class="logo-hex">₿</div>
-      <div>
-        <div class="logo-name">BLOCK<span>BET</span></div>
-        <div class="logo-sub">Bitcoin L1 · OP_NET</div>
-      </div>
-    </div>
-    <div class="hdr-right">
-      <a href="https://faucet.opnet.org/" target="_blank" class="btn-faucet">💧 Faucet</a>
-      <div class="net-badge"><div class="net-dot"></div>Regtest</div>
-      <button class="btn-connect disconnected" id="btnConnect" onclick="connectWallet()">Connect OPWallet</button>
-      <button class="btn-disconnect" id="btnDisconnect" onclick="disconnectWallet()" title="Disconnect wallet">✕ Disconnect</button>
-    </div>
-  </header>
-
-  <!-- Status bar -->
-  <div class="status-bar warn" id="statusBar">
-    <span>📡 Connecting to OP_NET Regtest...</span>
-    <code>opr1sqp6...d5dlf</code>
-  </div>
-
-  <!-- Layout -->
-  <div class="layout">
-
-    <!-- Chart -->
-    <div class="chart-col">
-      <div class="chart-hdr">
-        <div class="chart-coin"><span style="color:var(--btc);font-size:20px;">₿</span> BTC/USDT</div>
-        <div style="display:flex;align-items:center;gap:10px;">
-          <div class="chart-price" id="chartPrice">—</div>
-          <div class="chg pos" id="chartChange">—</div>
-        </div>
-      </div>
-      <div class="chart-wrap">
-        <div id="tv_chart"></div>
-        <div class="chart-c-tr"></div>
-        <div class="chart-c-bl"></div>
-        <div class="chart-glow"></div>
-      </div>
-    </div>
-
-    <!-- Right panel -->
-    <div class="panel">
-
-      <!-- Round info -->
-      <div class="round-box">
-        <div class="round-top">
-          <div><div class="rlabel">Round</div><div class="rval" id="roundId">—</div></div>
-          <div style="text-align:center;"><div class="rlabel">Target Block</div><div class="rval btc" id="targetBlock">—</div></div>
-          <span class="pill pill-sync" id="roundPill">SYNCING</span>
-        </div>
-
-        <div class="pool-labels">
-          <span class="lbl-even">EVEN &nbsp;<span id="evenPool">0</span> sats</span>
-          <span style="color:var(--muted)" id="poolPct">50%</span>
-          <span class="lbl-odd"><span id="oddPool">0</span> sats&nbsp; ODD</span>
-        </div>
-        <div class="pool-track"><div class="pool-fill" id="poolBar" style="width:50%"></div></div>
-
-        <div class="sg">
-          <div class="si"><div class="si-l">Wallet</div><div class="si-v" id="walletAddr" style="font-size:10px;">Not connected</div></div>
-          <div class="si"><div class="si-l">Current Block</div><div class="si-v neon" id="currentBlock">—</div></div>
-          <div class="si"><div class="si-l">My Bet</div><div class="si-v btc" id="myBet">—</div></div>
-          <div class="si"><div class="si-l">Winner Block</div><div class="si-v" id="winnerBlock">—</div></div>
-        </div>
-        <div class="res-banner" id="resBanner"></div>
-      </div>
-
-      <!-- Hash viz (shown after settle) -->
-      <div class="hash-box" id="hashBox">
-        <div class="hash-title">Winning Block Hash · Last Nibble</div>
-        <div class="hash-display" id="hashDisplay">—</div>
-        <div class="hash-parity">
-          <span style="color:var(--muted);font-size:10px;">Parity:</span>
-          <span class="parity" id="hashParity">—</span>
-        </div>
-      </div>
-
-      <!-- Bet form -->
-      <div class="bet-form">
-        <div class="sec-title">Place your bet</div>
-        <div class="amt-wrap">
-          <input class="amt-input" id="betAmount" type="number" placeholder="10000" step="1000" min="10000"/>
-          <span class="amt-sfx">SATS</span>
-        </div>
-        <div class="bet-btns">
-          <button class="btn-even" id="btnEven" onclick="placeBet(true)" disabled>
-            EVEN<span class="btn-sub">0,2,4,6,8,a,c,e</span>
-          </button>
-          <button class="btn-odd" id="btnOdd" onclick="placeBet(false)" disabled>
-            ODD<span class="btn-sub">1,3,5,7,9,b,d,f</span>
-          </button>
-        </div>
-        <div id="betHint">Connect OPWallet to start betting</div>
-
-        <button class="act-btn btn-settle"   id="btnSettle"   onclick="settleRound()">⛏ Settle Round — Target Block Mined</button>
-        <button class="act-btn btn-claim"    id="btnClaim"    onclick="claimWinnings()">🏆 Claim Winnings</button>
-        <div class="pay-banner" id="payBanner"></div>
-        <button class="act-btn btn-withdraw" id="btnWithdraw" onclick="withdrawBTC()">⬇ Withdraw BTC</button>
-        <button class="act-btn btn-newround" id="btnNewRound" onclick="startNewRound()">▶ Start New Round</button>
-      </div>
-
-      <!-- How it works -->
-      <div class="how-box">
-        <div class="how-title">How it works</div>
-        <div class="how-steps">
-          <div class="how-step">
-            <div class="how-n">1</div>
-            <div class="how-t"><strong>Bet EVEN or ODD</strong> — predict the parity of the last hex nibble of the next Bitcoin block hash</div>
-          </div>
-          <div class="how-step">
-            <div class="how-n">2</div>
-            <div class="how-t"><strong>Wait for target block</strong> — after it's mined, anyone can call Settle to reveal the result</div>
-          </div>
-          <div class="how-step">
-            <div class="how-n">3</div>
-            <div class="how-t"><strong>Claim & Withdraw</strong> — winners share the whole pool proportionally, minus 2% house fee, paid in BTC</div>
-          </div>
-        </div>
-      </div>
+<!-- Header -->
+<header class="hdr">
+  <div class="logo">
+    <div class="logo-hex">₿</div>
+    <div>
+      <div class="logo-txt">BLOCK<span>BET</span></div>
+      <div class="logo-sub">Bitcoin L1 · OP_NET</div>
     </div>
   </div>
+  <div class="hdr-right">
+    <a href="https://faucet.opnet.org/" target="_blank" class="btn-faucet">💧 Faucet</a>
+    <div class="badge"><div class="bdot"></div>Regtest</div>
+    <button class="btn-conn off" id="btnConn" onclick="connectWallet()">Connect OPWallet</button>
+    <button class="btn-disc" id="btnDisc" onclick="disconnectWallet()">✕ Disconnect</button>
+  </div>
+</header>
+
+<!-- Status bar -->
+<div class="sbar warn" id="sbar">
+  <span>📡 Connecting to OP_NET Regtest...</span>
+  <code>opr1sqp6...d5dlf</code>
 </div>
 
+<!-- Body -->
+<div class="body">
+
+  <!-- Chart -->
+  <div class="chart-col">
+    <div class="chart-hdr">
+      <div class="chart-sym"><span style="color:var(--btc);font-size:18px;">₿</span> BTC/USDT</div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div class="chart-price" id="chartPrice">—</div>
+        <div class="chg pos" id="chartChg">—</div>
+      </div>
+    </div>
+    <div class="chart-wrap">
+      <div id="tv_chart"></div>
+      <div class="ctr"></div><div class="cbl"></div>
+    </div>
+  </div>
+
+  <!-- Panel -->
+  <div class="panel">
+
+    <!-- Round -->
+    <div class="round-box">
+      <div class="row2">
+        <div class="fld"><div class="fld-l">Round</div><div class="fld-v" id="roundId">—</div></div>
+        <div class="fld" style="text-align:center;"><div class="fld-l">Target Block</div><div class="fld-v btc" id="targetBlock">—</div></div>
+        <span class="pill p-sync" id="pill">SYNCING</span>
+      </div>
+      <div class="pool-lbl">
+        <span style="color:var(--even)">EVEN &nbsp;<span id="evenPool">0</span> sats</span>
+        <span style="color:var(--m)" id="poolPct">50%</span>
+        <span style="color:var(--odd)"><span id="oddPool">0</span> sats&nbsp; ODD</span>
+      </div>
+      <div class="pool-track"><div class="pool-fill" id="poolBar" style="width:50%"></div></div>
+      <div class="sg">
+        <div class="si">
+          <div class="si-l">Wallet</div>
+          <div class="si-v" id="walletAddr" style="font-size:9px;word-break:break-all;">Not connected</div>
+        </div>
+        <div class="si">
+          <div class="si-l">Balance</div>
+          <div class="si-v btc" id="walletBal">—</div>
+        </div>
+        <div class="si">
+          <div class="si-l">Current Block</div>
+          <div class="si-v neon" id="curBlock">—</div>
+        </div>
+        <div class="si">
+          <div class="si-l">My Bet</div>
+          <div class="si-v even" id="myBet">—</div>
+        </div>
+      </div>
+      <div class="res-ban" id="resBan"></div>
+    </div>
+
+    <!-- AI Agent -->
+    <div class="ai-box" id="aiBox">
+      <div class="ai-hdr">
+        <div class="ai-title"><div class="ai-dot"></div>AI Prediction Agent</div>
+        <button class="ai-toggle" id="aiToggle" onclick="toggleAI()">ON</button>
+      </div>
+      <div id="aiContent">
+        <div class="ai-thinking" id="aiThinking">
+          <div class="ai-spinner"></div><span>Analysing block patterns...</span>
+        </div>
+        <div class="ai-body" id="aiResult" style="display:none">
+          <div class="ai-bars">
+            <div class="ai-bar-wrap">
+              <div class="ai-bar-lbl">
+                <span>EVEN</span>
+                <span class="ev" id="aiEvenPct">—</span>
+              </div>
+              <div class="ai-bar-track">
+                <div class="ai-bar-fill ev" id="aiEvenBar" style="width:50%"></div>
+              </div>
+            </div>
+            <div class="ai-bar-wrap">
+              <div class="ai-bar-lbl">
+                <span>ODD</span>
+                <span class="od" id="aiOddPct">—</span>
+              </div>
+              <div class="ai-bar-track">
+                <div class="ai-bar-fill od" id="aiOddBar" style="width:50%"></div>
+              </div>
+            </div>
+          </div>
+          <div class="ai-verdict">
+            <div>
+              <div style="font-size:8px;color:var(--m);letter-spacing:1px;text-transform:uppercase;margin-bottom:2px;">Recommendation</div>
+              <div class="ai-rec" id="aiRec">—</div>
+            </div>
+            <div style="text-align:right">
+              <div style="font-size:8px;color:var(--m);letter-spacing:1px;text-transform:uppercase;margin-bottom:2px;">Confidence</div>
+              <div class="ai-conf" id="aiConf">—</div>
+            </div>
+          </div>
+          <div style="font-size:9px;color:var(--m);margin-top:2px;line-height:1.5;" id="aiReason"></div>
+        </div>
+        <div class="ai-disabled" id="aiOff" style="display:none">
+          AI Agent disabled — click ON to enable predictions
+        </div>
+      </div>
+    </div>
+
+    <!-- Hash viz -->
+    <div class="hash-box" id="hashBox">
+      <div class="hash-t">Winning Block Hash · Last Nibble</div>
+      <div class="hash-d" id="hashD">—</div>
+      <div class="hash-par">
+        <span style="color:var(--m);font-size:9px;">Last nibble parity:</span>
+        <span class="par" id="hashPar">—</span>
+      </div>
+    </div>
+
+    <!-- Bet form -->
+    <div class="bet-form">
+      <div class="sec-t">Place your bet</div>
+      <div class="amt-wrap">
+        <input class="amt-in" id="betAmt" type="number" placeholder="10000" step="1000" min="10000"/>
+        <span class="amt-sfx">SATS</span>
+      </div>
+      <div class="bet-row">
+        <button class="bev" id="btnEven" onclick="placeBet(true)" disabled>
+          EVEN<span class="bsub">0,2,4,6,8,a,c,e</span>
+        </button>
+        <button class="bod" id="btnOdd" onclick="placeBet(false)" disabled>
+          ODD<span class="bsub">1,3,5,7,9,b,d,f</span>
+        </button>
+      </div>
+      <div id="betHint">Connect OPWallet to start betting</div>
+      <button class="act a-settle" id="btnSettle" onclick="doSettle()">⛏ Settle Round — Target Block Mined</button>
+      <button class="act a-claim"  id="btnClaim"  onclick="doClaim()">🏆 Claim Winnings</button>
+      <div class="pay-ban" id="payBan"></div>
+      <button class="act a-wd"     id="btnWd"     onclick="doWithdraw()">⬇ Withdraw BTC</button>
+      <button class="act a-new"    id="btnNew"    onclick="doNewRound()">▶ Start New Round</button>
+    </div>
+
+    <!-- How it works -->
+    <div class="how-box">
+      <div class="how-t">How it works</div>
+      <div class="how-steps">
+        <div class="step"><div class="sn">1</div><div class="st"><strong>Bet EVEN or ODD</strong> — predict the parity of the last hex nibble of the next Bitcoin block hash</div></div>
+        <div class="step"><div class="sn">2</div><div class="st"><strong>Wait for target block</strong> — once mined, anyone can call Settle to reveal the result</div></div>
+        <div class="step"><div class="sn">3</div><div class="st"><strong>Claim & Withdraw</strong> — winners share the pool proportionally, minus 2% house fee, paid in BTC</div></div>
+      </div>
+    </div>
+  </div>
+</div><!-- body -->
+</div><!-- app -->
+
 <script>
-// ─── Config ───────────────────────────────────────────────────────────────────
+// ─── CONFIG ───────────────────────────────────────────────────────────────────
 const CONTRACT = 'opr1sqp6szazjvrnxrrqnrds8d6xjld9dyzskssrd5dlf';
-// OP_NET RPC endpoints — try multiple paths as the API may vary
 const RPC_URLS = [
   'https://regtest.opnet.org/api/v1/json-rpc',
   'https://regtest.opnet.org/',
-  'https://api.opnet.org/api/v1/json-rpc',
+  'https://regtest.opnet.org',
 ];
-const RPC = RPC_URLS[0]; // primary, fallback handled in rpcRead()
 const MIN_SATS = 10000;
 
-const SIGS = {
-  bet:        'bet(bool,uint64)',
-  settle:     'settle()',
-  claim:      'claim()',
-  withdraw:   'withdraw()',
-  newRound:   'startNewRound()',
-  roundInfo:  'getRoundInfo()',
-  betInfo:    'getBetInfo(address)',
-  pending:    'getPendingWithdrawal(address)',
-  treasury:   'setTreasury(address)',
-};
+// ─── STATE ────────────────────────────────────────────────────────────────────
+let wallet    = null;  // { address, publicKey }
+let opnetAddr = null;  // Uint8Array[32]
+let round     = null;
+let myBet     = null;
+let myPending = 0n;
+let isBusy    = false;
+let aiEnabled = true;
+let aiTimer   = null;
+let lastPriceRaw = null;  // for AI calculations
 
-// ─── App state ────────────────────────────────────────────────────────────────
-let wallet        = null;   // { address, publicKey, addressType }
-let opnetAddr     = null;   // Uint8Array[32]
-let round         = null;
-let myBet         = null;
-let myPending     = 0n;
-let isBusy        = false;
-
-// ─── Encoding (from opnet.ts) ─────────────────────────────────────────────────
-const toHex = b => Array.from(b).map(x => x.toString(16).padStart(2,'0')).join('');
+// ─── ENCODING ─────────────────────────────────────────────────────────────────
+const toHex = b => Array.from(b).map(x=>x.toString(16).padStart(2,'0')).join('');
 function fromHex(h) {
   h = h.startsWith('0x') ? h.slice(2) : h;
   const o = new Uint8Array(h.length/2);
@@ -368,345 +780,456 @@ function fromHex(h) {
   return o;
 }
 function cat(...a) {
-  const t=a.reduce((n,x)=>n+x.length,0),o=new Uint8Array(t);let p=0;
-  a.forEach(x=>{o.set(x,p);p+=x.length;});return o;
+  const t=a.reduce((n,x)=>n+x.length,0),o=new Uint8Array(t);
+  let p=0; a.forEach(x=>{o.set(x,p);p+=x.length;}); return o;
 }
-const bool8 = v => new Uint8Array([v?1:0]);
+const b8  = v => new Uint8Array([v?1:0]);
 function u64be(v) {
   const n=BigInt(v),b=new Uint8Array(8);
-  for(let i=0;i<8;i++) b[7-i]=Number((n>>BigInt(i*8))&0xffn);
-  return b;
+  for(let i=0;i<8;i++) b[7-i]=Number((n>>BigInt(i*8))&0xffn); return b;
 }
-function addr32(b) {
-  if(b.length!==32) throw new Error('need 32 bytes'); return b;
-}
-// FNV-1a 32-bit LE — matches btc-runtime encodeSelector()
-function sel(sig) {
+function a32(b) { if(b.length!==32) throw new Error('need 32 bytes'); return b; }
+function fnvSel(sig) {
   let h=0x811c9dc5;
   for(let i=0;i<sig.length;i++){h^=sig.charCodeAt(i);h=(Math.imul(h,0x01000193)>>>0);}
-  const b=new Uint8Array(4);new DataView(b.buffer).setUint32(0,h,true);return b;
+  const b=new Uint8Array(4); new DataView(b.buffer).setUint32(0,h,true); return b;
 }
-const calldata = (sig,...args) => toHex(cat(sel(sig),...args));
-const satsToBtc = s => (Number(s)/1e8).toFixed(8).replace(/\.?0+$/,'')||'0';
-async function sha256pubkey(hex) {
-  const h = await crypto.subtle.digest('SHA-256', fromHex(hex).buffer);
+const mkCall = (sig,...args) => toHex(cat(fnvSel(sig),...args));
+const s2btc  = s => (Number(s)/1e8).toFixed(8).replace(/\.?0+$/,'')||'0';
+async function sha256hex(hex) {
+  const h = await crypto.subtle.digest('SHA-256',fromHex(hex).buffer);
   return new Uint8Array(h);
 }
 
-// ─── ABI Decoder ──────────────────────────────────────────────────────────────
+// ─── DECODER ──────────────────────────────────────────────────────────────────
 class D {
   constructor(h){const b=fromHex(h);this.v=new DataView(b.buffer);this.o=0;}
   bool(){return this.v.getUint8(this.o++)!==0;}
   u256(){let v=0n;for(let i=0;i<32;i++)v=(v<<8n)|BigInt(this.v.getUint8(this.o+i));this.o+=32;return v;}
 }
-const decodeRound = h => {
+const decRound = h=>{
   const d=new D(h);
   return {
-    roundId:     d.u256(), targetBlock: d.u256(),
-    evenPool:    d.u256(), oddPool:     d.u256(),
-    settled:     d.bool(), winnerSide:  Number(d.u256()),
-    currentBlock:d.u256(), winningBlock:d.u256(),
+    roundId:d.u256(),targetBlock:d.u256(),
+    evenPool:d.u256(),oddPool:d.u256(),
+    settled:d.bool(),winnerSide:Number(d.u256()),
+    currentBlock:d.u256(),winningBlock:d.u256(),
   };
 };
-const decodeBet = h => { const d=new D(h); return {even:d.u256(),odd:d.u256(),claimed:d.bool()}; };
-const decodePending = h => new D(h).u256();
+const decBet     = h=>{const d=new D(h);return{even:d.u256(),odd:d.u256(),claimed:d.bool()};};
+const decPending = h=>new D(h).u256();
 
-// ─── RPC read (no wallet) ─────────────────────────────────────────────────────
-// rpcRead: pass 'from' wallet address as 3rd btc_call param when available
-// Without it, Blockchain.tx.sender = zero → "Address o..." simulation error
-async function rpcRead(sig, args=[], fromAddr=null) {
-  const cd = calldata(sig, ...args);
-  // btc_call params: [to, data, from?, fromLegacy?, height?]
-  const from = fromAddr || (wallet ? wallet.address : null);
-  const params = from ? [CONTRACT, cd, from] : [CONTRACT, cd];
-  const body = JSON.stringify({jsonrpc:'2.0', id:1, method:'btc_call', params});
+// ─── RPC ──────────────────────────────────────────────────────────────────────
+async function rpcRead(sig, args=[], from=null) {
+  const cd  = mkCall(sig,...args);
+  const frm = from || wallet?.address || null;
   let lastErr = null;
+
   for (const url of RPC_URLS) {
-    try {
-      const r = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body,
-      });
-      if (!r.ok) { lastErr = new Error('HTTP '+r.status); continue; }
-      const j = await r.json();
-      if (j.error) { lastErr = new Error(j.error?.message || String(j.error)); continue; }
-      let d = typeof j.result==='string' ? j.result : (j.result?.result ?? j.result?.data ?? '');
-      if (d.startsWith('0x')) d = d.slice(2);
-      return d;
-    } catch(e) { lastErr = e; }
+    // Try WITH from first, then without
+    const attempts = frm
+      ? [[CONTRACT, cd, frm], [CONTRACT, cd]]
+      : [[CONTRACT, cd]];
+
+    for (const params of attempts) {
+      try {
+        const r = await fetch(url, {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({jsonrpc:'2.0',id:1,method:'btc_call',params}),
+        });
+        if (!r.ok) { lastErr=new Error('HTTP '+r.status); break; }
+        const j = await r.json();
+        if (j.error) {
+          const msg = j.error?.message || String(j.error);
+          console.warn('[RPC]', sig, url, '→', msg);
+          lastErr = new Error(msg);
+          continue; // try without from
+        }
+        let d = typeof j.result==='string' ? j.result : (j.result?.result ?? j.result?.data ?? '');
+        if (d.startsWith('0x')) d = d.slice(2);
+        console.log('[RPC OK]', sig, 'len='+d.length, 'from='+(params.length>2?'yes':'no'));
+        return d;
+      } catch(e) { lastErr=e; }
+    }
   }
   throw lastErr || new Error('All RPC endpoints failed');
 }
 
-// ─── OPWallet tx ─────────────────────────────────────────────────────────────
-async function rpcCall(sig, args=[], sats=0) {
+async function rpcWrite(sig, args=[], sats=0) {
   if (!window.opnet) throw new Error('OPWallet not found');
   return window.opnet.signAndBroadcastInteraction({
-    to: CONTRACT, calldata: calldata(sig,...args), value: sats,
+    to: CONTRACT, calldata: mkCall(sig,...args), value: sats,
   });
 }
 
-// ─── Wallet ───────────────────────────────────────────────────────────────────
+// ─── WALLET ───────────────────────────────────────────────────────────────────
 async function connectWallet() {
   if (!window.opnet) {
-    alert('OPWallet not found!\n\nInstall from:\nhttps://github.com/btc-vision/opwallet/releases\n\n' +
-      'Then switch to Regtest network and get tBTC from faucet.opnet.org');
+    alert('OPWallet not found!\n\nInstall: https://github.com/btc-vision/opwallet/releases\n\nThen switch to Regtest and get tBTC from faucet.opnet.org');
     return;
   }
-  const btn = document.getElementById('btnConnect');
-  btn.innerText = 'Connecting...'; btn.disabled = true;
+  const btn = document.getElementById('btnConn');
+  btn.innerText='Connecting...'; btn.disabled=true;
   try {
     const [addrs, pk] = await Promise.all([
       window.opnet.requestAccounts(),
       window.opnet.getPublicKey(),
     ]);
-    if (!addrs?.length) throw new Error('No accounts returned');
+    if (!addrs?.length) throw new Error('No accounts');
     const addr = addrs[0];
-    wallet = {
-      address: addr, publicKey: pk,
-      addressType: addr.startsWith('bc1p')||addr.startsWith('bcrt1p') ? 'p2tr' :
-                   addr.startsWith('bc1q')||addr.startsWith('bcrt1q') ? 'p2wpkh' : 'p2pkh',
-    };
-    opnetAddr = await sha256pubkey(pk);
+    wallet    = { address:addr, publicKey:pk };
+    opnetAddr = await sha256hex(pk);
 
-    // Update header — show connected state
-    const short = addr.slice(0,8)+'...'+addr.slice(-6);
+    const short = addr.slice(0,10)+'...'+addr.slice(-6);
     document.getElementById('walletAddr').innerText = short;
-    btn.innerHTML = '<div class="wallet-dot"></div>' + short;
-    btn.className = 'btn-connect connected';
-    btn.disabled  = false;
-    btn.onclick   = null;
-    document.getElementById('btnDisconnect').style.display = 'flex';
+    btn.innerHTML = '<div class="wdot"></div>'+short;
+    btn.className = 'btn-conn on'; btn.disabled=false; btn.onclick=null;
+    document.getElementById('btnDisc').style.display='flex';
 
-    updateBetButtons();
+    // Fetch balance
+    fetchBalance();
+    updateBtns();
     await refreshMyBet();
+    runAI();
     window.opnet.on('disconnect', disconnectWallet);
   } catch(e) {
-    btn.innerText = 'Connect OPWallet'; btn.className = 'btn-connect disconnected';
-    btn.disabled = false;
-    alert('Connection failed: ' + e.message);
+    btn.innerText='Connect OPWallet'; btn.className='btn-conn off'; btn.disabled=false;
+    alert('Failed: '+e.message);
   }
 }
 
 function disconnectWallet() {
-  try { window.opnet?.disconnect?.(); } catch(e) {}
-  wallet = null; opnetAddr = null; myBet = null; myPending = 0n;
-  const btn = document.getElementById('btnConnect');
-  btn.innerHTML = 'Connect OPWallet';
-  btn.className = 'btn-connect disconnected'; btn.onclick = connectWallet;
-  document.getElementById('btnDisconnect').style.display = 'none';
-  document.getElementById('walletAddr').innerText = 'Not connected';
-  document.getElementById('myBet').innerText = '—';
-  hideAll(); updateBetButtons();
+  try { window.opnet?.disconnect?.(); } catch(e){}
+  wallet=null; opnetAddr=null; myBet=null; myPending=0n;
+  const btn=document.getElementById('btnConn');
+  btn.innerHTML='Connect OPWallet'; btn.className='btn-conn off'; btn.onclick=connectWallet;
+  document.getElementById('btnDisc').style.display='none';
+  document.getElementById('walletAddr').innerText='Not connected';
+  document.getElementById('walletBal').innerText='—';
+  document.getElementById('myBet').innerText='—';
+  hideAll(); updateBtns();
 }
 
-// ─── Data refresh ─────────────────────────────────────────────────────────────
+async function fetchBalance() {
+  if (!wallet || !window.opnet) return;
+  try {
+    // OPWallet getBalance returns satoshis
+    const bal = await window.opnet.getBalance?.();
+    if (bal !== undefined) {
+      const sats = typeof bal === 'bigint' ? bal : BigInt(bal);
+      document.getElementById('walletBal').innerText = s2btc(sats)+' BTC';
+    } else {
+      // Fallback: try getAccountBalance
+      const info = await window.opnet.getAccountBalance?.(wallet.address);
+      if (info?.confirmed !== undefined) {
+        document.getElementById('walletBal').innerText =
+          s2btc(BigInt(info.confirmed))+' BTC';
+      }
+    }
+  } catch(e) {
+    console.warn('fetchBalance:', e.message);
+    document.getElementById('walletBal').innerText = '— tBTC';
+  }
+}
+
+// ─── DATA ─────────────────────────────────────────────────────────────────────
 async function refreshRound() {
   try {
-    const hex = await rpcRead(SIGS.roundInfo);
-    if (!hex || hex.length < 32) { setConnecting(); return; }
-    round = decodeRound(hex);
+    const hex = await rpcRead('getRoundInfo()');
+    if (!hex || hex.length < 32) { setSync(); return; }
+    round = decRound(hex);
     updateRoundUI();
-    updateBetButtons(); // re-evaluate after round data arrives
-    updateStatusBar(true);
+    setSbar(true);
   } catch(e) {
     console.warn('refreshRound:', e.message);
-    setConnecting();
-    updateStatusBar(false, e.message);
+    setSync();
+    setSbar(false, e.message);
+    const h=document.getElementById('betHint');
+    h.innerText='❌ '+e.message.slice(0,70);
+    h.style.color='var(--odd)';
   }
 }
 
 async function refreshMyBet() {
-  if (!opnetAddr) return;
+  if (!opnetAddr || !wallet) return;
   try {
-    const a32 = addr32(opnetAddr);
-    // Pass wallet address as 'from' so simulation knows the caller
-    const [bh, ph] = await Promise.all([
-      rpcRead(SIGS.betInfo,  [a32], wallet?.address),
-      rpcRead(SIGS.pending,  [a32], wallet?.address),
+    const a = a32(opnetAddr);
+    const [bh,ph] = await Promise.all([
+      rpcRead('getBetInfo(address)', [a], wallet.address),
+      rpcRead('getPendingWithdrawal(address)', [a], wallet.address),
     ]);
-    myBet     = decodeBet(bh);
-    myPending = decodePending(ph);
-    const tot = myBet.even + myBet.odd;
-    document.getElementById('myBet').innerText = tot > 0n
-      ? Number(tot).toLocaleString() + ' sats (' + (myBet.even>0n?'🟢EVEN':'🔴ODD') + ')'
+    myBet     = decBet(bh);
+    myPending = decPending(ph);
+    const tot = myBet.even+myBet.odd;
+    document.getElementById('myBet').innerText = tot>0n
+      ? Number(tot).toLocaleString()+' sats ('+(myBet.even>0n?'🟢EVEN':'🔴ODD')+')'
       : '—';
-    updateActionBtns();
-    updateBetButtons();
+    updateActBtns();
+    updateBtns();
+    fetchBalance(); // refresh after bet
   } catch(e) { console.warn('refreshMyBet:', e.message); }
 }
 
-// ─── UI ───────────────────────────────────────────────────────────────────────
-function setConnecting() {
-  ['roundId','targetBlock','winnerBlock'].forEach(id => document.getElementById(id).innerText = '—');
-  document.getElementById('currentBlock').innerText = '—';
-  document.getElementById('evenPool').innerText = '0';
-  document.getElementById('oddPool').innerText  = '0';
-  document.getElementById('poolPct').innerText  = '50%';
-  document.getElementById('poolBar').style.width = '50%';
-  setPill('CONNECTING', 'pill-sync');
+// ─── AI AGENT ─────────────────────────────────────────────────────────────────
+let aiOn = true;
+
+function toggleAI() {
+  aiOn = !aiOn;
+  const btn = document.getElementById('aiToggle');
+  btn.innerText = aiOn ? 'ON' : 'OFF';
+  btn.className = 'ai-toggle' + (aiOn ? '' : ' off');
+  document.getElementById('aiThinking').style.display = 'none';
+  document.getElementById('aiResult').style.display   = 'none';
+  document.getElementById('aiOff').style.display      = aiOn ? 'none' : 'block';
+  if (aiOn) runAI();
 }
 
-function updateStatusBar(ok, err) {
-  const el = document.getElementById('statusBar');
+function runAI() {
+  if (!aiOn) return;
+  document.getElementById('aiThinking').style.display = 'flex';
+  document.getElementById('aiResult').style.display   = 'none';
+  document.getElementById('aiOff').style.display      = 'none';
+
+  // Simulate AI analysis with real data context
+  setTimeout(() => {
+    if (!aiOn) return;
+    computeAIPrediction();
+  }, 1200 + Math.random()*800);
+}
+
+function computeAIPrediction() {
+  // AI uses: last 256 hashes statistically ~50/50, but adds:
+  // 1. Pool imbalance signal (contrarian: lean toward smaller pool)
+  // 2. BTC price momentum (weak correlation heuristic)
+  // 3. Time-of-day entropy estimate
+  // 4. Recent block nonce distribution pattern
+
+  const evenPool = round ? Number(round.evenPool) : 0;
+  const oddPool  = round ? Number(round.oddPool)  : 0;
+  const total    = evenPool + oddPool;
+
+  // Base: 50/50
+  let evenScore = 50;
+  let oddScore  = 50;
+
+  // Signal 1: pool imbalance (contrarian — lean to smaller pool)
+  if (total > 0) {
+    const evenRatio = evenPool / total;
+    // If 60% in EVEN, lean slightly toward ODD
+    const imbalance = (evenRatio - 0.5) * 30;
+    evenScore -= imbalance;
+    oddScore  += imbalance;
+  }
+
+  // Signal 2: nonce entropy (time-based pseudo-random signal)
+  const now      = Date.now();
+  const minute   = Math.floor(now / 60000) % 60;
+  const entropy  = (Math.sin(minute * 0.314) * 8);
+  evenScore += entropy;
+  oddScore  -= entropy;
+
+  // Signal 3: price momentum
+  if (lastPriceRaw) {
+    // Higher price → slightly more even nonces (spurious but adds flavor)
+    const priceMod = (lastPriceRaw % 2 === 0 ? 3 : -3);
+    evenScore += priceMod;
+    oddScore  -= priceMod;
+  }
+
+  // Normalize to 100
+  const rawTotal = evenScore + oddScore;
+  evenScore = Math.max(5, Math.min(95, Math.round(evenScore / rawTotal * 100)));
+  oddScore  = 100 - evenScore;
+
+  // Add small random noise ±3%
+  const noise = Math.round((Math.random()-0.5)*6);
+  evenScore = Math.max(5, Math.min(95, evenScore+noise));
+  oddScore  = 100 - evenScore;
+
+  const isEven = evenScore > oddScore;
+  const conf   = isEven ? evenScore : oddScore;
+  const confLabel = conf >= 60 ? 'High' : conf >= 55 ? 'Moderate' : 'Low';
+
+  // Reasons
+  const reasons = [];
+  if (total > 0) {
+    const pct = Math.round(evenPool/total*100);
+    if (pct > 60) reasons.push(`${pct}% of pool on EVEN → contrarian signal for ODD`);
+    else if (pct < 40) reasons.push(`${pct}% of pool on ODD → contrarian signal for EVEN`);
+    else reasons.push('Pool balanced — no strong contrarian signal');
+  }
+  reasons.push(`Time entropy score: ${entropy.toFixed(1)}`);
+  reasons.push('Note: Bitcoin block hashes are ~50/50 by design');
+
+  // Update UI
+  document.getElementById('aiEvenPct').innerText = evenScore+'%';
+  document.getElementById('aiOddPct').innerText  = oddScore+'%';
+  document.getElementById('aiEvenBar').style.width = evenScore+'%';
+  document.getElementById('aiOddBar').style.width  = oddScore+'%';
+
+  const recEl = document.getElementById('aiRec');
+  recEl.innerText  = isEven ? '→ BET EVEN' : '→ BET ODD';
+  recEl.className  = 'ai-rec '+(isEven?'even':'odd');
+
+  document.getElementById('aiConf').innerText = conf+'% · '+confLabel;
+  document.getElementById('aiReason').innerText = reasons.join(' · ');
+
+  document.getElementById('aiThinking').style.display = 'none';
+  document.getElementById('aiResult').style.display   = 'flex';
+
+  // Re-run every 30s
+  if (aiTimer) clearTimeout(aiTimer);
+  aiTimer = setTimeout(runAI, 30000);
+}
+
+// ─── UI ───────────────────────────────────────────────────────────────────────
+function setSync() {
+  ['roundId','targetBlock'].forEach(id=>document.getElementById(id).innerText='—');
+  document.getElementById('curBlock').innerText='—';
+  document.getElementById('evenPool').innerText='0';
+  document.getElementById('oddPool').innerText='0';
+  document.getElementById('poolPct').innerText='50%';
+  document.getElementById('poolBar').style.width='50%';
+  setPill('CONNECTING','p-sync');
+}
+
+function setSbar(ok, err) {
+  const el=document.getElementById('sbar');
   if (ok) {
-    el.className = 'status-bar ok';
-    el.innerHTML = '<span>🟢 OP_NET Regtest · Contract live</span><code>opr1sqp6...d5dlf</code>';
+    el.className='sbar ok';
+    el.innerHTML='<span>🟢 OP_NET Regtest · Contract live</span><code>opr1sqp6...d5dlf</code>';
   } else {
-    el.className = 'status-bar warn';
-    const msg = err ? err.slice(0,60) : 'Cannot reach RPC';
-    el.innerHTML = '<span>⚠️ RPC: ' + msg + '</span><a href="https://faucet.opnet.org/" target="_blank" style="color:var(--neon);font-size:10px;text-decoration:none;">💧 Faucet</a>';
+    const msg=(err||'RPC error').slice(0,60);
+    el.className='sbar err';
+    el.innerHTML='<span>⚠️ '+msg+'</span>';
   }
 }
 
 function updateRoundUI() {
-  if (!round) { setConnecting(); return; }
-  document.getElementById('roundId').innerText      = '#' + round.roundId.toString();
-  document.getElementById('targetBlock').innerText  = Number(round.targetBlock).toLocaleString();
-  document.getElementById('currentBlock').innerText = Number(round.currentBlock).toLocaleString();
-  document.getElementById('winnerBlock').innerText  = round.winningBlock > 0n
-    ? Number(round.winningBlock).toLocaleString() : '—';
+  if (!round) { setSync(); return; }
+  document.getElementById('roundId').innerText = '#'+round.roundId.toString();
+  document.getElementById('targetBlock').innerText = Number(round.targetBlock).toLocaleString();
+  document.getElementById('curBlock').innerText    = Number(round.currentBlock).toLocaleString();
 
-  const ep = Number(round.evenPool), op = Number(round.oddPool);
+  const ep=Number(round.evenPool), op=Number(round.oddPool);
   document.getElementById('evenPool').innerText = ep.toLocaleString();
   document.getElementById('oddPool').innerText  = op.toLocaleString();
-  const tot = ep+op, pct = tot>0 ? (ep/tot*100).toFixed(1) : 50;
+  const tot=ep+op, pct=tot>0?(ep/tot*100).toFixed(1):50;
   document.getElementById('poolPct').innerText   = pct+'%';
   document.getElementById('poolBar').style.width = pct+'%';
 
-  const cur = Number(round.currentBlock), tgt = Number(round.targetBlock);
-  const bann = document.getElementById('resBanner');
+  const cur=Number(round.currentBlock), tgt=Number(round.targetBlock);
+  const ban=document.getElementById('resBan');
   hideAll();
 
   if (round.settled) {
-    const ew = round.winnerSide === 1;
-    setPill('SETTLED','pill-settled');
-    bann.className = 'res-banner show ' + (ew?'even-w':'odd-w');
-    bann.innerHTML = ew
-      ? '🟢 EVEN WON — last nibble was even'
-      : '🔴 ODD WON — last nibble was odd';
+    const ew=round.winnerSide===1;
+    setPill('SETTLED','p-sett');
+    ban.className='res-ban show '+(ew?'ew':'ow');
+    ban.innerHTML=ew?'🟢 EVEN WON — last nibble was even':'🔴 ODD WON — last nibble was odd';
     showHashViz(ew);
-    show('btnNewRound');
-  } else if (cur >= tgt && tgt > 0) {
-    setPill('PENDING','pill-pending');
-    bann.className = 'res-banner';
-    show('btnSettle');
+    show('btnNew');
+  } else if (cur>=tgt&&tgt>0) {
+    setPill('PENDING','p-pend');
+    ban.className='res-ban'; show('btnSettle');
   } else {
-    setPill('OPEN','pill-open');
-    bann.className = 'res-banner';
+    setPill('OPEN','p-open'); ban.className='res-ban';
   }
-  updateActionBtns();
-  updateBetButtons();
+  updateActBtns(); updateBtns();
+  if (aiOn) runAI(); // refresh AI when round updates
 }
 
-function updateActionBtns() {
-  if (!round || !myBet) return;
-  if (!round.settled) return;
-  const tot  = myBet.even + myBet.odd;
-  const iWon = (round.winnerSide===1 && myBet.even>0n) || (round.winnerSide===2 && myBet.odd>0n);
-  if (iWon && !myBet.claimed && tot>0n) show('btnClaim');
-  if (myPending > 0n) {
-    document.getElementById('btnWithdraw').innerText =
-      '⬇ Withdraw ' + satsToBtc(myPending) + ' BTC';
-    show('btnWithdraw');
+function updateActBtns() {
+  if (!round||!myBet||!round.settled) return;
+  const tot=myBet.even+myBet.odd;
+  const iWon=(round.winnerSide===1&&myBet.even>0n)||(round.winnerSide===2&&myBet.odd>0n);
+  if (iWon&&!myBet.claimed&&tot>0n) show('btnClaim');
+  if (myPending>0n) {
+    document.getElementById('btnWd').innerText='⬇ Withdraw '+s2btc(myPending)+' BTC';
+    show('btnWd');
   }
 }
 
-function updateBetButtons() {
-  const cur = Number(round?.currentBlock || 0);
-  const tgt = Number(round?.targetBlock  || 0);
-  // noBet: no bet placed yet — myBet null means not yet loaded, treat as no bet
-  const noBet    = !myBet || (myBet.even===0n && myBet.odd===0n);
-  // canBet: wallet connected + round is OPEN + no existing bet
-  // tgt===0 means round data not fully loaded, allow if round exists and not settled
-  const canBet   = wallet && round && !round.settled &&
-    (tgt===0 || cur < tgt) && noBet && !isBusy;
-
-  document.getElementById('btnEven').disabled = !canBet;
-  document.getElementById('btnOdd').disabled  = !canBet;
-
-  const hint = document.getElementById('betHint');
-  if (!wallet) {
-    hint.innerText = 'Connect OPWallet to start betting'; hint.style.color='var(--muted)';
-  } else if (!round) {
-    hint.innerText = '⏳ Loading contract...'; hint.style.color='var(--muted)';
-  } else if (round.settled) {
-    hint.innerText = 'Round settled — start a new round'; hint.style.color='var(--muted)';
-  } else if (!noBet) {
-    hint.innerText = '✓ Bet placed — awaiting block #' + tgt.toLocaleString();
-    hint.style.color = 'var(--even)';
-  } else if (cur >= tgt && tgt > 0) {
-    hint.innerText = '⛏ Target block mined — settle to reveal!'; hint.style.color='var(--btc)';
-  } else {
-    hint.innerText = 'Min: 10,000 sats · Target block #' + tgt.toLocaleString();
-    hint.style.color = 'var(--muted)';
-  }
+function updateBtns() {
+  const cur=Number(round?.currentBlock||0), tgt=Number(round?.targetBlock||0);
+  const noBet=!myBet||(myBet.even===0n&&myBet.odd===0n);
+  const canBet=wallet&&round&&!round.settled&&(tgt===0||cur<tgt)&&noBet&&!isBusy;
+  document.getElementById('btnEven').disabled=!canBet;
+  document.getElementById('btnOdd').disabled=!canBet;
+  const h=document.getElementById('betHint');
+  if (!wallet) { h.innerText='Connect OPWallet to start betting'; h.style.color='var(--m)'; }
+  else if (!round) { h.innerText='⏳ Loading contract...'; h.style.color='var(--m)'; }
+  else if (round.settled) { h.innerText='Round settled — start new round'; h.style.color='var(--m)'; }
+  else if (!noBet) { h.innerText='✓ Bet placed — awaiting block #'+tgt.toLocaleString(); h.style.color='var(--even)'; }
+  else if (cur>=tgt&&tgt>0) { h.innerText='⛏ Target mined — settle now!'; h.style.color='var(--btc)'; }
+  else { h.innerText='Min: 10,000 sats · Target #'+tgt.toLocaleString(); h.style.color='var(--m)'; }
 }
 
-// ─── Actions ──────────────────────────────────────────────────────────────────
+// ─── ACTIONS ──────────────────────────────────────────────────────────────────
 async function placeBet(isEven) {
   if (!wallet) { alert('Connect OPWallet first'); return; }
-  const sats = parseInt(document.getElementById('betAmount').value);
-  if (!sats || sats < MIN_SATS) { alert('Min bet: ' + MIN_SATS.toLocaleString() + ' sats'); return; }
-  isBusy = true; updateBetButtons();
-  const hint = document.getElementById('betHint');
-  hint.innerText = '⏳ Confirm in OPWallet...'; hint.style.color='var(--btc)';
+  const sats=parseInt(document.getElementById('betAmt').value);
+  if (!sats||sats<MIN_SATS) { alert('Min: '+MIN_SATS.toLocaleString()+' sats'); return; }
+  isBusy=true; updateBtns();
+  const h=document.getElementById('betHint');
+  h.innerText='⏳ Confirm in OPWallet...'; h.style.color='var(--btc)';
   try {
-    const r = await rpcCall(SIGS.bet, [bool8(isEven), u64be(sats)], sats);
-    const tx = r?.txid ?? r?.txId ?? '';
-    hint.innerText = '✓ Broadcast!' + (tx?' · '+tx.slice(0,14)+'...':'');
-    hint.style.color = 'var(--even)';
-    setTimeout(()=>{refreshRound();refreshMyBet();}, 4000);
+    const r=await rpcWrite('bet(bool,uint64)',[b8(isEven),u64be(sats)],sats);
+    const tx=r?.txid??r?.txId??'';
+    h.innerText='✓ Broadcast!'+(tx?' · '+tx.slice(0,14)+'...':'');
+    h.style.color='var(--even)';
+    fetchBalance();
+    setTimeout(()=>{refreshRound();refreshMyBet();},4000);
   } catch(e) {
-    hint.innerText = '❌ ' + (e.message||'Failed'); hint.style.color='var(--odd)';
-  } finally { isBusy=false; updateBetButtons(); }
+    h.innerText='❌ '+(e.message||'Failed'); h.style.color='var(--odd)';
+  } finally { isBusy=false; updateBtns(); }
 }
 
-async function settleRound() {
-  if (!wallet) { alert('Connect OPWallet first'); return; }
-  const b = document.getElementById('btnSettle');
+async function doSettle() {
+  if (!wallet) return;
+  const b=document.getElementById('btnSettle');
   b.disabled=true; b.innerText='⏳ Settling...';
-  try { await rpcCall(SIGS.settle,[],0); setTimeout(refreshRound,5000); }
+  try { await rpcWrite('settle()',[],0); setTimeout(refreshRound,5000); }
   catch(e) { alert('Failed: '+e.message); b.disabled=false; b.innerText='⛏ Settle Round'; }
 }
 
-async function claimWinnings() {
-  if (!wallet) { alert('Connect OPWallet first'); return; }
-  const b = document.getElementById('btnClaim');
+async function doClaim() {
+  if (!wallet) return;
+  const b=document.getElementById('btnClaim');
   b.disabled=true; b.innerText='⏳ Claiming...';
   try {
-    await rpcCall(SIGS.claim,[],0);
-    const pb = document.getElementById('payBanner');
-    pb.className='pay-banner win show';
-    pb.innerHTML='🏆 Claimed! Press Withdraw to get your BTC';
+    await rpcWrite('claim()',[],0);
+    const pb=document.getElementById('payBan');
+    pb.className='pay-ban win show';
+    pb.innerHTML='🏆 Claimed! Press Withdraw to receive BTC';
     hide('btnClaim');
     setTimeout(()=>{refreshRound();refreshMyBet();},5000);
   } catch(e) { alert('Failed: '+e.message); b.disabled=false; b.innerText='🏆 Claim Winnings'; }
 }
 
-async function withdrawBTC() {
-  if (!wallet) { alert('Connect OPWallet first'); return; }
-  const b = document.getElementById('btnWithdraw');
+async function doWithdraw() {
+  if (!wallet) return;
+  const b=document.getElementById('btnWd');
   b.disabled=true; b.innerText='⏳ Withdrawing...';
   try {
-    await rpcCall(SIGS.withdraw,[],0);
-    const pb = document.getElementById('payBanner');
-    pb.className='pay-banner win show';
-    pb.innerHTML='💰 ' + satsToBtc(myPending) + ' BTC withdrawal initiated!';
-    myPending=0n; hide('btnWithdraw');
-    setTimeout(refreshMyBet, 5000);
+    await rpcWrite('withdraw()',[],0);
+    const pb=document.getElementById('payBan');
+    pb.className='pay-ban win show';
+    pb.innerHTML='💰 '+s2btc(myPending)+' BTC withdrawal initiated!';
+    myPending=0n; hide('btnWd');
+    fetchBalance(); setTimeout(refreshMyBet,5000);
   } catch(e) { alert('Failed: '+e.message); b.disabled=false; }
 }
 
-async function startNewRound() {
-  if (!wallet) { alert('Connect OPWallet first'); return; }
-  const b = document.getElementById('btnNewRound');
+async function doNewRound() {
+  if (!wallet) return;
+  const b=document.getElementById('btnNew');
   b.disabled=true; b.innerText='⏳ Starting...';
   try {
-    await rpcCall(SIGS.newRound,[],0);
-    document.getElementById('payBanner').className='pay-banner';
-    document.getElementById('resBanner').className='res-banner';
+    await rpcWrite('startNewRound()',[],0);
+    document.getElementById('payBan').className='pay-ban';
+    document.getElementById('resBan').className='res-ban';
     document.getElementById('hashBox').style.display='none';
     myBet=null; myPending=0n;
     document.getElementById('myBet').innerText='—';
@@ -714,36 +1237,31 @@ async function startNewRound() {
   } catch(e) { alert('Failed: '+e.message); b.disabled=false; b.innerText='▶ Start New Round'; }
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-function setPill(text, cls) {
-  const el = document.getElementById('roundPill');
-  el.innerText=text; el.className='pill '+cls;
-}
-function show(id) { const e=document.getElementById(id); if(e){e.style.display='block';e.disabled=false;} }
-function hide(id) { const e=document.getElementById(id); if(e) e.style.display='none'; }
-function hideAll() {
-  ['btnSettle','btnClaim','btnWithdraw','btnNewRound'].forEach(hide);
-  document.getElementById('payBanner').className='pay-banner';
-}
-function showHashViz(isEven) {
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+function setPill(t,c){const e=document.getElementById('pill');e.innerText=t;e.className='pill '+c;}
+function show(id){const e=document.getElementById(id);if(e){e.style.display='block';e.disabled=false;}}
+function hide(id){const e=document.getElementById(id);if(e)e.style.display='none';}
+function hideAll(){['btnSettle','btnClaim','btnWd','btnNew'].forEach(hide);document.getElementById('payBan').className='pay-ban';}
+function showHashViz(ew){
   document.getElementById('hashBox').style.display='block';
-  const nibble = isEven ? 'c' : '9';
-  document.getElementById('hashDisplay').innerHTML =
-    '<span style="color:var(--muted)">000000000000000000024b5f8e3da7c2f1a...</span>' +
-    '<span class="hash-last">'+nibble+'</span>';
-  const p = document.getElementById('hashParity');
-  p.innerHTML = isEven ? '🟢 EVEN ('+nibble+' = 12)' : '🔴 ODD ('+nibble+' = 9)';
-  p.className = 'parity ' + (isEven?'even':'odd');
+  const n=ew?'c':'9';
+  document.getElementById('hashD').innerHTML=
+    '<span style="color:var(--m)">000000000000000000024b5f8e3da7c2f1a...</span>'+
+    '<span class="hash-last">'+n+'</span>';
+  const p=document.getElementById('hashPar');
+  p.innerHTML=ew?'🟢 EVEN ('+n+' = 12)':'🔴 ODD ('+n+' = 9)';
+  p.className='par '+(ew?'even':'odd');
 }
 
-// ─── BTC price ────────────────────────────────────────────────────────────────
+// ─── PRICE WS ─────────────────────────────────────────────────────────────────
 function startPriceWS() {
-  const ws = new WebSocket('wss://stream.binance.com:9443/stream?streams=btcusdt@ticker');
-  ws.onmessage = e => {
-    const t = JSON.parse(e.data).data; if(!t) return;
+  const ws=new WebSocket('wss://stream.binance.com:9443/stream?streams=btcusdt@ticker');
+  ws.onmessage=e=>{
+    const t=JSON.parse(e.data).data; if(!t)return;
     const p=parseFloat(t.c), ch=parseFloat(t.P);
-    document.getElementById('chartPrice').innerText = '$'+Math.round(p).toLocaleString();
-    const el=document.getElementById('chartChange');
+    lastPriceRaw=Math.round(p);
+    document.getElementById('chartPrice').innerText='$'+Math.round(p).toLocaleString();
+    const el=document.getElementById('chartChg');
     el.innerText=(ch>=0?'+':'')+ch.toFixed(2)+'%';
     el.className='chg '+(ch>=0?'pos':'neg');
   };
@@ -751,50 +1269,48 @@ function startPriceWS() {
   ws.onerror=()=>ws.close();
 }
 
-// ─── TradingView ──────────────────────────────────────────────────────────────
+// ─── TRADINGVIEW ──────────────────────────────────────────────────────────────
 new TradingView.widget({
-  container_id:'tv_chart', symbol:'BINANCE:BTCUSDT', interval:'1',
-  theme:'dark', width:'100%', height:'100%', autosize:true,
-  hide_side_toolbar:true, allow_symbol_change:false, toolbar_bg:'#080808',
+  container_id:'tv_chart',symbol:'BINANCE:BTCUSDT',interval:'1',
+  theme:'dark',width:'100%',height:'100%',autosize:true,
+  hide_side_toolbar:true,allow_symbol_change:false,toolbar_bg:'#050505',
   overrides:{
     "paneProperties.background":"#080d08","paneProperties.backgroundType":"solid",
     "paneProperties.vertGridProperties.color":"rgba(247,147,26,0.04)",
     "paneProperties.horzGridProperties.color":"rgba(247,147,26,0.04)",
-    "scalesProperties.textColor":"#666","scalesProperties.backgroundColor":"#080808",
+    "scalesProperties.textColor":"#555","scalesProperties.backgroundColor":"#050505",
   },
   loading_screen:{backgroundColor:"#080d08",foregroundColor:"#f7931a"},
 });
 
-// ─── Init ─────────────────────────────────────────────────────────────────────
+// ─── INIT ──────────────────────────────────────────────────────────────────────
 startPriceWS();
-setConnecting();
+setSync();
 refreshRound();
 setInterval(refreshRound, 15000);
+setInterval(()=>{if(wallet)fetchBalance();}, 60000);
 
-// Restore wallet session
-window.addEventListener('load', () => {
+// Restore session
+window.addEventListener('load',()=>{
   if (!window.opnet) return;
-  window.opnet.getAccounts().then(async addrs => {
+  window.opnet.getAccounts().then(async addrs=>{
     if (!addrs?.length) return;
     try {
-      const pk   = await window.opnet.getPublicKey();
-      const addr = addrs[0];
-      wallet = {
-        address: addr, publicKey: pk,
-        addressType: addr.startsWith('bc1p')||addr.startsWith('bcrt1p') ? 'p2tr' :
-                     addr.startsWith('bc1q')||addr.startsWith('bcrt1q') ? 'p2wpkh' : 'p2pkh',
-      };
-      opnetAddr = await sha256pubkey(pk);
-      const short = addr.slice(0,8)+'...'+addr.slice(-6);
-      document.getElementById('walletAddr').innerText = short;
-      const btn = document.getElementById('btnConnect');
-      btn.innerHTML = '<div class="wallet-dot"></div>'+short;
-      btn.className = 'btn-connect connected'; btn.onclick = null;
-      document.getElementById('btnDisconnect').style.display = 'flex';
-      updateBetButtons();
+      const pk=await window.opnet.getPublicKey();
+      const addr=addrs[0];
+      wallet={address:addr,publicKey:pk};
+      opnetAddr=await sha256hex(pk);
+      const short=addr.slice(0,10)+'...'+addr.slice(-6);
+      document.getElementById('walletAddr').innerText=short;
+      const btn=document.getElementById('btnConn');
+      btn.innerHTML='<div class="wdot"></div>'+short;
+      btn.className='btn-conn on'; btn.onclick=null;
+      document.getElementById('btnDisc').style.display='flex';
+      updateBtns(); fetchBalance();
       await refreshMyBet();
-      window.opnet.on('disconnect', disconnectWallet);
-    } catch(e) { console.warn('Session restore:', e.message); }
+      runAI();
+      window.opnet.on('disconnect',disconnectWallet);
+    } catch(e){console.warn('restore:',e.message);}
   }).catch(()=>{});
 });
 
