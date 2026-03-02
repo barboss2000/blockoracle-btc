@@ -412,9 +412,14 @@ const decodeBet = h => { const d=new D(h); return {even:d.u256(),odd:d.u256(),cl
 const decodePending = h => new D(h).u256();
 
 // ─── RPC read (no wallet) ─────────────────────────────────────────────────────
-async function rpcRead(sig, args=[]) {
+// rpcRead: pass 'from' wallet address as 3rd btc_call param when available
+// Without it, Blockchain.tx.sender = zero → "Address o..." simulation error
+async function rpcRead(sig, args=[], fromAddr=null) {
   const cd = calldata(sig, ...args);
-  const body = JSON.stringify({jsonrpc:'2.0', id:1, method:'btc_call', params:[CONTRACT, cd]});
+  // btc_call params: [to, data, from?, fromLegacy?, height?]
+  const from = fromAddr || (wallet ? wallet.address : null);
+  const params = from ? [CONTRACT, cd, from] : [CONTRACT, cd];
+  const body = JSON.stringify({jsonrpc:'2.0', id:1, method:'btc_call', params});
   let lastErr = null;
   for (const url of RPC_URLS) {
     try {
@@ -422,9 +427,8 @@ async function rpcRead(sig, args=[]) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body,
-        mode: 'cors',
       });
-      if (!r.ok) { lastErr = new Error('HTTP '+r.status+' from '+url); continue; }
+      if (!r.ok) { lastErr = new Error('HTTP '+r.status); continue; }
       const j = await r.json();
       if (j.error) { lastErr = new Error(j.error?.message || String(j.error)); continue; }
       let d = typeof j.result==='string' ? j.result : (j.result?.result ?? j.result?.data ?? '');
@@ -504,6 +508,7 @@ async function refreshRound() {
     if (!hex || hex.length < 32) { setConnecting(); return; }
     round = decodeRound(hex);
     updateRoundUI();
+    updateBetButtons(); // re-evaluate after round data arrives
     updateStatusBar(true);
   } catch(e) {
     console.warn('refreshRound:', e.message);
@@ -516,9 +521,10 @@ async function refreshMyBet() {
   if (!opnetAddr) return;
   try {
     const a32 = addr32(opnetAddr);
+    // Pass wallet address as 'from' so simulation knows the caller
     const [bh, ph] = await Promise.all([
-      rpcRead(SIGS.betInfo,  [a32]),
-      rpcRead(SIGS.pending,  [a32]),
+      rpcRead(SIGS.betInfo,  [a32], wallet?.address),
+      rpcRead(SIGS.pending,  [a32], wallet?.address),
     ]);
     myBet     = decodeBet(bh);
     myPending = decodePending(ph);
@@ -610,8 +616,11 @@ function updateActionBtns() {
 function updateBetButtons() {
   const cur = Number(round?.currentBlock || 0);
   const tgt = Number(round?.targetBlock  || 0);
-  const noBet = !myBet || (myBet.even===0n && myBet.odd===0n);
-  const canBet = wallet && round && !round.settled &&
+  // noBet: no bet placed yet — myBet null means not yet loaded, treat as no bet
+  const noBet    = !myBet || (myBet.even===0n && myBet.odd===0n);
+  // canBet: wallet connected + round is OPEN + no existing bet
+  // tgt===0 means round data not fully loaded, allow if round exists and not settled
+  const canBet   = wallet && round && !round.settled &&
     (tgt===0 || cur < tgt) && noBet && !isBusy;
 
   document.getElementById('btnEven').disabled = !canBet;
