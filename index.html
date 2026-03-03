@@ -643,6 +643,327 @@ async function rpcWrite(sig, args = [], sats = 0) {
 }
 
 
+// ─── WALLET ───────────────────────────────────────────────────────────────────
+async function connectWallet() {
+  const opw = getOPWallet();
+  if (!opw) {
+    alert('OPWallet не обнаружен!\n\nУстановите OPWallet:\ngithub.com/btc-vision/opwallet/releases\n\nЗатем:\n1. OPWallet → Settings → Network → Regtest\n2. Получите tBTC: faucet.opnet.org');
+    return;
+  }
+  const btn = document.getElementById('btnConn');
+  btn.innerText = 'Connecting...'; btn.disabled = true;
+  try {
+    const [addrs, pk] = await Promise.all([
+      opw.requestAccounts(),
+      opw.getPublicKey(),
+    ]);
+    if (!addrs?.length) throw new Error('No accounts');
+    const addr = addrs[0];
+    wallet    = { address: addr, publicKey: pk };
+    opnetAddr = await sha256hex(pk);
+    const short = addr.slice(0,10) + '...' + addr.slice(-6);
+    document.getElementById('walletAddr').innerText = short;
+    btn.innerHTML = '<div class="wdot"></div>' + short;
+    btn.className = 'btn-conn on'; btn.onclick = null;
+    document.getElementById('btnDisc').style.display = 'flex';
+    updateBtns(); fetchBalance();
+    await refreshMyBet(); runAI();
+    opw.on && opw.on('disconnect', disconnectWallet);
+  } catch(e) {
+    console.error('connectWallet:', e);
+    btn.innerText = 'Connect OPWallet'; btn.disabled = false; btn.onclick = connectWallet;
+    alert('Connection failed: ' + e.message);
+  }
+}
+
+function disconnectWallet() {
+  wallet = null; opnetAddr = null; round = null; myBet = null; myPending = 0n;
+  const btn = document.getElementById('btnConn');
+  btn.innerText = 'Connect OPWallet'; btn.className = 'btn-conn off'; btn.disabled = false; btn.onclick = connectWallet;
+  document.getElementById('btnDisc').style.display = 'none';
+  document.getElementById('walletAddr').innerText = '—';
+  document.getElementById('walletBal').innerText  = '— tBTC';
+  document.getElementById('myBet').innerText = '—';
+  hideAll(); setSync();
+}
+
+async function fetchBalance() {
+  if (!wallet) return;
+  const opw = getOPWallet();
+  if (!opw) return;
+  try {
+    let sats = null;
+    const methods = [
+      () => opw.getBalance?.(),
+      () => opw.getAccountBalance?.(wallet.address),
+      () => opw.getBalances?.(),
+      () => opw.getBitcoinBalance?.(),
+    ];
+    for (const fn of methods) {
+      try {
+        const b = await fn();
+        if (b === null || b === undefined) continue;
+        if (typeof b === 'bigint') { sats = b; break; }
+        if (typeof b === 'number') { sats = BigInt(Math.round(b)); break; }
+        if (typeof b === 'string') { sats = BigInt(b); break; }
+        if (typeof b === 'object') {
+          const v = b.confirmed ?? b.balance ?? b.total ?? b.amount ?? b.value;
+          if (v !== undefined && v !== null) {
+            sats = BigInt(typeof v === 'string' ? Math.round(parseFloat(v) * (v.includes('.') ? 1e8 : 1)) : Math.round(Number(v)));
+            break;
+          }
+        }
+      } catch(e2) {}
+    }
+    document.getElementById('walletBal').innerText = sats !== null && sats >= 0n ? s2btc(sats) + ' tBTC' : '— tBTC';
+  } catch(e) {
+    document.getElementById('walletBal').innerText = '— tBTC';
+  }
+}
+
+// ─── DATA ─────────────────────────────────────────────────────────────────────
+async function refreshRound() {
+  setHint('⏳ Loading contract...', 'var(--m)');
+  try {
+    const hex = await rpcRead('getRoundInfo()');
+    if (!hex || hex.length < 64) {
+      setSbar(false, 'Empty response (len=' + (hex?.length ?? 0) + ')');
+      setHint('▶ Contract ready — press "Start First Round" to begin!', 'var(--btc)');
+      show('btnNew');
+      const btnNew = document.getElementById('btnNew');
+      btnNew.innerText = '▶ Start First Round (Initialize Contract)';
+      btnNew.style.background = 'var(--btc)';
+      btnNew.style.color = '#000';
+      btnNew.style.border = 'none';
+      btnNew.style.fontWeight = '700';
+      document.getElementById('btnEven').disabled = true;
+      document.getElementById('btnOdd').disabled  = true;
+      return;
+    }
+    round = decRound(hex);
+    updateRoundUI();
+    setSbar(true);
+  } catch(e) {
+    console.error('refreshRound:', e.message);
+    setSbar(false, e.message);
+    setHint('❌ ' + e.message.slice(0,60), 'var(--odd)');
+  }
+}
+
+async function refreshMyBet() {
+  if (!opnetAddr || !wallet) return;
+  try {
+    const addr32 = a32(opnetAddr);
+    const [bh, ph] = await Promise.all([
+      rpcRead('getBetInfo(address)',           [addr32], wallet.address),
+      rpcRead('getPendingWithdrawal(address)', [addr32], wallet.address),
+    ]);
+    myBet     = decBet(bh);
+    myPending = decPending(ph);
+    const tot = myBet.even + myBet.odd;
+    document.getElementById('myBet').innerText = tot > 0n
+      ? Number(tot).toLocaleString() + ' sats (' + (myBet.even > 0n ? '🟢EVEN' : '🔴ODD') + ')'
+      : '—';
+    updateActBtns(); updateBtns(); fetchBalance();
+  } catch(e) { console.warn('refreshMyBet:', e.message); }
+}
+
+// ─── AI AGENT ─────────────────────────────────────────────────────────────────
+function toggleAI() {
+  aiOn = !aiOn;
+  const btn = document.getElementById('aiToggle');
+  btn.innerText = aiOn ? 'ON' : 'OFF';
+  btn.className = 'ai-toggle' + (aiOn ? '' : ' off');
+  document.getElementById('aiThinking').style.display = 'none';
+  document.getElementById('aiResult').style.display   = 'none';
+  document.getElementById('aiOff').style.display      = aiOn ? 'none' : 'block';
+  if (aiTimer) clearTimeout(aiTimer);
+  if (aiOn) runAI();
+}
+
+function runAI() {
+  if (!aiOn) return;
+  document.getElementById('aiThinking').style.display = 'flex';
+  document.getElementById('aiResult').style.display   = 'none';
+  document.getElementById('aiOff').style.display      = 'none';
+  setTimeout(computeAI, 900 + Math.random() * 700);
+}
+
+function computeAI() {
+  if (!aiOn) return;
+  const ep  = round ? Number(round.evenPool) : 0;
+  const op  = round ? Number(round.oddPool)  : 0;
+  const tot = ep + op;
+  let es = 50, os = 50;
+  if (tot > 0) { const imb = (ep / tot - 0.5) * 28; es -= imb; os += imb; }
+  const min  = new Date().getMinutes();
+  const entr = Math.sin(min * 0.314 + Date.now() % 1000 * 0.001) * 7;
+  es += entr; os -= entr;
+  if (lastPrice) { const mod = (lastPrice % 2 === 0 ? 2.5 : -2.5); es += mod; os -= mod; }
+  if (round?.currentBlock) { const bm = (Number(round.currentBlock) % 2 === 0 ? 2 : -2); es += bm; os -= bm; }
+  const rawTot = es + os;
+  es = Math.max(5, Math.min(95, Math.round(es / rawTot * 100)));
+  os = 100 - es;
+  const noise = Math.round((Math.random() - 0.5) * 4);
+  es = Math.max(5, Math.min(95, es + noise)); os = 100 - es;
+  const isEven = es > os;
+  const conf   = isEven ? es : os;
+  const confLbl = conf >= 65 ? 'HIGH' : conf >= 55 ? 'MODERATE' : 'LOW';
+  let reason = '';
+  if (tot > 0) {
+    const pct = Math.round(ep / tot * 100);
+    reason += pct + '% pool on EVEN → ' + (pct > 55 ? 'contrarian→ODD' : pct < 45 ? 'contrarian→EVEN' : 'balanced') + ' · ';
+  }
+  reason += 'Entropy=' + entr.toFixed(1) + ' · Block#' + (round?.currentBlock ?? '?').toString();
+  reason += ' · Note: BTC hashes are ~50/50 by design';
+  document.getElementById('aiEvenPct').innerText = es + '%';
+  document.getElementById('aiOddPct').innerText  = os + '%';
+  document.getElementById('aiEvenBar').style.width = es + '%';
+  document.getElementById('aiOddBar').style.width  = os + '%';
+  const recEl = document.getElementById('aiRec');
+  recEl.innerText = isEven ? '→ BET EVEN' : '→ BET ODD';
+  recEl.className = 'ai-rec ' + (isEven ? 'even' : 'odd');
+  document.getElementById('aiConf').innerText   = conf + '% · ' + confLbl;
+  document.getElementById('aiReason').innerText = reason;
+  document.getElementById('aiThinking').style.display = 'none';
+  document.getElementById('aiResult').style.display   = 'flex';
+  if (aiTimer) clearTimeout(aiTimer);
+  aiTimer = setTimeout(runAI, 30000);
+}
+
+// ─── UI ───────────────────────────────────────────────────────────────────────
+function setHint(txt, color) {
+  const h = document.getElementById('betHint'); h.innerText = txt; h.style.color = color;
+}
+function setSbar(ok, err) {
+  const el = document.getElementById('sbar');
+  if (ok) {
+    el.className = 'sbar ok';
+    el.innerHTML = '<span>🟢 OP_NET Regtest · Contract live</span><code>opr1sqrl...p8vpx</code>' +
+      '<button onclick="showSettings()" style="margin-left:auto;background:transparent;border:1px solid rgba(247,147,26,0.4);color:var(--btc);padding:2px 8px;border-radius:4px;font-size:10px;cursor:pointer;font-family:inherit">&#x2699; Settings</button>';
+  } else {
+    el.className = 'sbar err';
+    el.innerHTML = '<span>⚠️ ' + (err || 'RPC error').slice(0,70) + '</span>' +
+      '<button onclick="showSettings()" style="margin-left:auto;background:transparent;border:1px solid rgba(247,147,26,0.4);color:var(--btc);padding:2px 8px;border-radius:4px;font-size:10px;cursor:pointer;font-family:inherit">&#x2699; Settings</button>';
+  }
+}
+function setSync() {
+  ['roundId','targetBlock'].forEach(id => document.getElementById(id).innerText = '—');
+  document.getElementById('curBlock').innerText  = '—';
+  document.getElementById('evenPool').innerText  = '0';
+  document.getElementById('oddPool').innerText   = '0';
+  document.getElementById('poolPct').innerText   = '50%';
+  document.getElementById('poolBar').style.width = '50%';
+  setPill('CONNECTING', 'p-sync');
+}
+function setPill(t, c) { const e = document.getElementById('pill'); e.innerText = t; e.className = 'pill ' + c; }
+function show(id) { const e = document.getElementById(id); if(e) { e.style.display = 'block'; e.disabled = false; } }
+function hide(id) { const e = document.getElementById(id); if(e) e.style.display = 'none'; }
+function hideAll() {
+  ['btnSettle','btnClaim','btnWd','btnNew'].forEach(hide);
+  document.getElementById('payBan').className = 'pay-ban';
+}
+function showHashViz(ew) {
+  document.getElementById('hashBox').style.display = 'block';
+  const n = ew ? 'c' : '9';
+  document.getElementById('hashD').innerHTML =
+    '<span style="color:var(--m)">000000000000000000024b5f8e3da7c...</span>' +
+    '<span class="hash-last">' + n + '</span>';
+  const p = document.getElementById('hashPar');
+  p.innerHTML = ew ? '🟢 EVEN (' + n + ' = 12)' : '🔴 ODD (' + n + ' = 9)';
+  p.className = 'par ' + (ew ? 'even' : 'odd');
+}
+function updateRoundUI() {
+  if (!round) { setSync(); return; }
+  document.getElementById('roundId').innerText     = '#' + round.roundId.toString();
+  document.getElementById('targetBlock').innerText = Number(round.targetBlock).toLocaleString();
+  document.getElementById('curBlock').innerText    = Number(round.currentBlock).toLocaleString();
+  const ep = Number(round.evenPool), op = Number(round.oddPool);
+  document.getElementById('evenPool').innerText = ep.toLocaleString();
+  document.getElementById('oddPool').innerText  = op.toLocaleString();
+  const tot = ep + op, pct = tot > 0 ? (ep / tot * 100).toFixed(1) : 50;
+  document.getElementById('poolPct').innerText   = pct + '%';
+  document.getElementById('poolBar').style.width = pct + '%';
+  const cur = Number(round.currentBlock), tgt = Number(round.targetBlock);
+  const ban = document.getElementById('resBan');
+  hideAll();
+  if (round.settled) {
+    const ew = round.winnerSide === 1;
+    setPill('SETTLED','p-sett');
+    ban.className = 'res-ban show ' + (ew ? 'ew' : 'ow');
+    ban.innerHTML = ew ? '🟢 EVEN WON — last nibble was even' : '🔴 ODD WON — last nibble was odd';
+    showHashViz(ew); show('btnNew');
+  } else if (cur >= tgt && tgt > 0) {
+    setPill('PENDING','p-pend'); ban.className = 'res-ban'; show('btnSettle');
+  } else {
+    setPill('OPEN','p-open'); ban.className = 'res-ban';
+  }
+  updateActBtns(); updateBtns(); if (aiOn) runAI();
+}
+function updateActBtns() {
+  if (!round || !myBet || !round.settled) return;
+  const tot  = myBet.even + myBet.odd;
+  const iWon = (round.winnerSide===1 && myBet.even>0n) || (round.winnerSide===2 && myBet.odd>0n);
+  if (iWon && !myBet.claimed && tot > 0n) show('btnClaim');
+  if (myPending > 0n) {
+    document.getElementById('btnWd').innerText = '⬇ Withdraw ' + s2btc(myPending) + ' BTC';
+    show('btnWd');
+  }
+}
+function updateBtns() {
+  const cur   = Number(round?.currentBlock || 0);
+  const tgt   = Number(round?.targetBlock  || 0);
+  const noBet = !myBet || (myBet.even === 0n && myBet.odd === 0n);
+  const canBet = wallet && round && !round.settled && (tgt === 0 || cur < tgt) && noBet && !isBusy;
+  document.getElementById('btnEven').disabled = !canBet;
+  document.getElementById('btnOdd').disabled  = !canBet;
+  if (!wallet)               { setHint('Connect OPWallet to start betting', 'var(--m)'); return; }
+  if (!round)                { setHint('⏳ Loading contract...', 'var(--m)'); return; }
+  if (round.settled)         { setHint('Round settled — start new round', 'var(--m)'); return; }
+  if (!noBet)                { setHint('✓ Bet placed — awaiting block #' + tgt.toLocaleString(), 'var(--even)'); return; }
+  if (cur >= tgt && tgt > 0) { setHint('⛏ Target mined — settle now!', 'var(--btc)'); return; }
+  setHint('Min: 10,000 sats · Target block #' + tgt.toLocaleString(), 'var(--m)');
+}
+
+// ─── ACTIONS ──────────────────────────────────────────────────────────────────
+async function placeBet(isEven) {
+  if (!wallet) { alert('Connect OPWallet first'); return; }
+  const sats = parseInt(document.getElementById('betAmt').value);
+  if (!sats || sats < MIN_SATS) { alert('Minimum: ' + MIN_SATS.toLocaleString() + ' sats'); return; }
+  isBusy = true; updateBtns(); setHint('⏳ Confirm in OPWallet...', 'var(--btc)');
+  try {
+    const r  = await rpcWrite('bet(bool,uint64)', [b8(isEven), u64be(sats)], sats);
+    const tx = r?.txid ?? r?.txId ?? '';
+    setHint('✓ Broadcast!' + (tx ? ' · ' + tx.slice(0,14) + '...' : ''), 'var(--even)');
+    fetchBalance(); setTimeout(() => { refreshRound(); refreshMyBet(); }, 4000);
+  } catch(e) { setHint('❌ ' + (e.message || 'Failed'), 'var(--odd)'); }
+  finally { isBusy = false; updateBtns(); }
+}
+async function doSettle() {
+  const b = document.getElementById('btnSettle'); b.disabled = true; b.innerText = '⏳ Settling...';
+  try { await rpcWrite('settle()', [], 0); setTimeout(refreshRound, 5000); }
+  catch(e) { alert('Failed: ' + e.message); b.disabled = false; b.innerText = '⛏ Settle Round'; }
+}
+async function doClaim() {
+  const b = document.getElementById('btnClaim'); b.disabled = true; b.innerText = '⏳ Claiming...';
+  try {
+    await rpcWrite('claim()', [], 0);
+    const pb = document.getElementById('payBan');
+    pb.className = 'pay-ban win show'; pb.innerHTML = '🏆 Claimed! Press Withdraw to receive BTC';
+    hide('btnClaim'); setTimeout(() => { refreshRound(); refreshMyBet(); }, 5000);
+  } catch(e) { alert('Failed: ' + e.message); b.disabled = false; b.innerText = '🏆 Claim Winnings'; }
+}
+async function doWithdraw() {
+  const b = document.getElementById('btnWd'); b.disabled = true; b.innerText = '⏳ Withdrawing...';
+  try {
+    await rpcWrite('withdraw()', [], 0);
+    const pb = document.getElementById('payBan');
+    pb.className = 'pay-ban win show'; pb.innerHTML = '💰 ' + s2btc(myPending) + ' BTC sent!';
+    myPending = 0n; hide('btnWd'); fetchBalance(); setTimeout(refreshMyBet, 5000);
+  } catch(e) { alert('Failed: ' + e.message); b.disabled = false; }
+}
+
+
 // Debug: inspect OPWallet API
 async function inspectWallet() {
   const opw = getOPWallet();
