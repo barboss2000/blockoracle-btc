@@ -690,18 +690,35 @@ async function fetchBalance() {
   if (!opw) return;
   try {
     let sats = null;
-    if (opw.getBalance) {
-      const b = await opw.getBalance();
-      sats = typeof b === 'bigint' ? b : BigInt(b ?? 0);
-    } else if (opw.getAccountBalance) {
-      const b = await opw.getAccountBalance(wallet.address);
-      sats = BigInt(b?.confirmed ?? b?.balance ?? 0);
-    } else if (opw.getBalances) {
-      const b = await opw.getBalances();
-      sats = BigInt(b?.confirmed ?? b?.total ?? 0);
+    // Try every known OPWallet balance API variant
+    const methods = [
+      () => opw.getBalance?.(),
+      () => opw.getAccountBalance?.(wallet.address),
+      () => opw.getBalances?.(),
+      () => opw.getBitcoinBalance?.(),
+      () => opw.balance,
+    ];
+    for (const fn of methods) {
+      try {
+        const b = await fn();
+        if (b === null || b === undefined) continue;
+        console.log('[fetchBalance] raw:', JSON.stringify(b));
+        // Handle all possible return shapes
+        if (typeof b === 'bigint') { sats = b; break; }
+        if (typeof b === 'number') { sats = BigInt(Math.round(b)); break; }
+        if (typeof b === 'string') { sats = BigInt(b); break; }
+        if (typeof b === 'object') {
+          const v = b.confirmed ?? b.balance ?? b.total ?? b.amount ?? b.value ?? b.btc ?? b.satoshis;
+          if (v !== undefined && v !== null) {
+            sats = BigInt(typeof v === 'string' ? Math.round(parseFloat(v) * (v.includes('.') ? 1e8 : 1)) : Math.round(Number(v)));
+            break;
+          }
+        }
+      } catch(e2) { console.warn('[fetchBalance method]', e2.message); }
     }
-    document.getElementById('walletBal').innerText =
-      sats !== null && sats >= 0n ? s2btc(sats) + ' tBTC' : '— tBTC';
+    const balEl = document.getElementById('walletBal');
+    balEl.innerText = sats !== null && sats >= 0n ? s2btc(sats) + ' tBTC' : '— tBTC';
+    console.log('[fetchBalance] final sats:', sats?.toString());
   } catch(e) {
     console.warn('fetchBalance:', e.message);
     document.getElementById('walletBal').innerText = '— tBTC';
@@ -716,11 +733,19 @@ async function refreshRound() {
     console.log('[refreshRound] hex len=', hex?.length, hex?.slice(0,80));
     if (!hex || hex.length < 64) {
       setSbar(false, 'Empty response (len=' + (hex?.length ?? 0) + ')');
-      // Empty can mean: contract exists but no round started yet
-      setHint('⚠️ No round data — start first round to initialize', 'var(--odd)');
+      // Empty = contract deployed but startNewRound() never called yet
+      setHint('▶ Contract ready — press "Start First Round" to begin!', 'var(--btc)');
       show('btnNew');
-      document.getElementById('btnNew').innerText = '▶ Start First Round (Initialize)';
-      console.warn('[BlockBet] Empty response from contract:', getContract());
+      const btnNew = document.getElementById('btnNew');
+      btnNew.innerText = '▶ Start First Round (Initialize Contract)';
+      btnNew.style.background = 'var(--btc)';
+      btnNew.style.color = '#000';
+      btnNew.style.border = 'none';
+      btnNew.style.fontWeight = '700';
+      // Enable bet buttons = false, show only the init button
+      document.getElementById('btnEven').disabled = true;
+      document.getElementById('btnOdd').disabled  = true;
+      console.warn('[BlockBet] No active round — need startNewRound()');
       return;
     }
     round = decRound(hex);
@@ -960,15 +985,38 @@ async function doWithdraw() {
   } catch(e) { alert('Failed: ' + e.message); b.disabled = false; }
 }
 async function doNewRound() {
-  const b = document.getElementById('btnNew'); b.disabled = true; b.innerText = '⏳ Starting...';
+  if (!wallet) { alert('Connect OPWallet first'); return; }
+  const b = document.getElementById('btnNew');
+  b.disabled = true; b.innerText = '⏳ Confirm in OPWallet...';
+  b.style.background = 'var(--m)'; b.style.color = '#000';
   try {
-    await rpcWrite('startNewRound()', [], 0);
+    const r = await rpcWrite('startNewRound()', [], 0);
+    const tx = r?.txid ?? r?.txId ?? r?.hash ?? '';
+    b.innerText = '⏳ Broadcasting' + (tx ? ' · ' + tx.slice(0,10) + '...' : '') + ' (wait ~30s)';
     document.getElementById('payBan').className = 'pay-ban';
     document.getElementById('resBan').className = 'res-ban';
     document.getElementById('hashBox').style.display = 'none';
-    myBet = null; myPending = 0n; document.getElementById('myBet').innerText = '—';
-    hideAll(); setTimeout(refreshRound, 5000);
-  } catch(e) { alert('Failed: ' + e.message); b.disabled = false; b.innerText = '▶ Start New Round'; }
+    myBet = null; myPending = 0n;
+    document.getElementById('myBet').innerText = '—';
+    hideAll();
+    // Poll for round data - retry several times
+    let tries = 0;
+    const poll = async () => {
+      tries++;
+      b.innerText = '⏳ Waiting for confirmation (' + tries + '/10)...';
+      await refreshRound();
+      if (!round && tries < 10) setTimeout(poll, 6000);
+      else if (round) { b.style.background = ''; b.style.color = ''; }
+    };
+    setTimeout(poll, 8000);
+  } catch(e) {
+    console.error('doNewRound:', e);
+    const msg = e.message || String(e);
+    alert('Failed to start round:\n' + msg);
+    b.disabled = false;
+    b.innerText = '▶ Start First Round (Initialize Contract)';
+    b.style.background = 'var(--btc)'; b.style.color = '#000';
+  }
 }
 
 // ─── PRICE ────────────────────────────────────────────────────────────────────
