@@ -215,18 +215,10 @@ display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:
 .btn-conn:disabled{opacity:.6;cursor:wait;}
 .btn-conn.on{animation:pulse 2s infinite;}
 @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(74,222,128,.4);}50%{box-shadow:0 0 0 8px rgba(74,222,128,0);}}
-.loading-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.9);z-index:9999;display:none;align-items:center;justify-content:center;flex-direction:column;gap:16px;}
-.loading-overlay.show{display:flex;}
-.loader{width:48px;height:48px;border:3px solid rgba(247,147,26,0.3);border-top-color:var(--btc);border-radius:50%;animation:spinLoader 1s linear infinite;}
-@keyframes spinLoader{to{transform:rotate(360deg);}}
 </style>
 </head>
 <body>
 <canvas id="graffiti-bg"></canvas>
-<div class="loading-overlay" id="loadingOverlay">
-<div class="loader"></div>
-<div style="color:var(--btc);font-size:12px;">Connecting to OP_NET...</div>
-</div>
 <div class="app">
 <header class="hdr">
 <div class="logo">
@@ -463,19 +455,24 @@ currentBlock: d.u256(), winningBlock: d.u256(),
 const decBet = h => { const d = new D(h); return { even: d.u256(), odd: d.u256(), claimed: d.bool() }; };
 const decPending = h => new D(h).u256();
 
-// ─── RPC READ ─────────────────────────────────────────────────────────────────
-async function rpcRead(sig, args = [], from = null) {
+// ─── RPC READ (FIXED) ─────────────────────────────────────────────────────────
+async function rpcRead(sig, args = [], from = null, retryCount = 0) {
 const cd = mkCallHex(sig, ...args);
 const addr = window._contractOverride || getContract();
 
+// Method 1: OPWallet provider
 if (window.opnet?.provider?.call) {
 try {
-const result = await window.opnet.provider.call({ to: addr,  cd });
+const result = await Promise.race([
+window.opnet.provider.call({ to: addr, data: cd }),
+new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 10000))
+]);
 const d = (result || '').replace(/^0x/, '');
 if (d) { workingRpc = '__opnet_provider__'; return d; }
-} catch(e) { console.warn('[RPC opnet.provider failed]', e.message); }
+} catch(e) { console.warn('[RPC] opnet.provider failed:', e.message); }
 }
 
+// Method 2: Direct fetch with CORS fallback
 const addrs = [addr, CONTRACT_BCRT];
 const frm = from || wallet?.address || null;
 const paramSets = [];
@@ -484,15 +481,18 @@ if (frm) paramSets.push([a, cd, frm]);
 paramSets.push([a, cd]);
 }
 
-const urls = workingRpc && !workingRpc.startsWith('__') 
-? [workingRpc, ...RPC_URLS.filter(u => u !== workingRpc)] 
+const PROXY = 'https://corsproxy.io/?';
+const directUrls = workingRpc && !workingRpc.startsWith('__')
+? [workingRpc, ...RPC_URLS.filter(u => u !== workingRpc)]
 : RPC_URLS;
+const allUrls = [...directUrls, ...directUrls.map(u => PROXY + encodeURIComponent(u))];
 
-for (const url of urls) {
+let lastErr = new Error('All RPC endpoints failed');
+for (const url of allUrls) {
 for (const params of paramSets) {
 try {
 const controller = new AbortController();
-const timeout = setTimeout(() => controller.abort(), 10000);
+const timeout = setTimeout(() => controller.abort(), 15000);
 const resp = await fetch(url, {
 method: 'POST',
 headers: { 'Content-Type': 'application/json' },
@@ -500,22 +500,34 @@ body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'btc_call', params }),
 signal: controller.signal,
 });
 clearTimeout(timeout);
-if (!resp.ok) continue;
+if (!resp.ok) { lastErr = new Error('HTTP ' + resp.status); continue; }
 const j = await resp.json();
-if (j.error) continue;
+if (j.error) {
+const msg = typeof j.error === 'object' ? j.error.message : String(j.error);
+lastErr = new Error(msg); continue;
+}
 let d = '';
 if (typeof j.result === 'string') d = j.result;
 else if (j.result?.result) d = j.result.result;
 else if (j.result?.data) d = j.result.data;
 d = d.replace(/^0x/, '');
 if (d) { workingRpc = url; return d; }
-} catch(e) { console.warn('[RPC FAIL]', url.slice(0,50), e.message); }
+} catch(e) { lastErr = e; }
 }
-}
-throw new Error('All RPC endpoints failed');
 }
 
-// ─── RPC WRITE (FIXED FOR OPWALLET API) ──────────────────────────────────────
+// Retry with backoff
+if (retryCount < 2) {
+const delay = 3000 * (retryCount + 1);
+console.log(`[RPC] Retrying in ${delay}ms... (${retryCount + 1}/2)`);
+await new Promise(resolve => setTimeout(resolve, delay));
+return rpcRead(sig, args, from, retryCount + 1);
+}
+
+throw lastErr;
+}
+
+// ─── RPC WRITE (FIXED FOR OPWALLET) ───────────────────────────────────────────
 async function rpcWrite(sig, args = [], sats = 0) {
 const opw = getOPWallet();
 if (!opw) throw new Error('OPWallet not found');
@@ -568,7 +580,6 @@ const btn = document.getElementById('btnConn');
 const originalText = btn.innerText;
 btn.innerText = '⏳ Connecting...';
 btn.disabled = true;
-document.getElementById('loadingOverlay').classList.add('show');
 
 try {
 const accounts = await Promise.race([
@@ -603,8 +614,6 @@ btn.innerText = originalText;
 btn.disabled = false;
 btn.onclick = connectWallet;
 alert('Connection failed: ' + e.message);
-} finally {
-document.getElementById('loadingOverlay').classList.remove('show');
 }
 }
 
@@ -653,7 +662,11 @@ document.getElementById('walletBal').innerText = sats !== null && sats >= 0n ? s
 async function refreshRound() {
 setHint('⏳ Loading contract...', 'var(--m)');
 try {
-const hex = await rpcRead('getRoundInfo()');
+const hex = await Promise.race([
+rpcRead('getRoundInfo()'),
+new Promise((_, reject) => setTimeout(() => reject(new Error('Contract timeout')), 20000))
+]);
+
 if (!hex || hex.length < 64) {
 setSbar(false, 'Contract not initialized');
 setHint('▶ Press "Start First Round" to begin!', 'var(--btc)');
@@ -665,6 +678,7 @@ document.getElementById('btnEven').disabled = true;
 document.getElementById('btnOdd').disabled = true;
 return;
 }
+
 round = decRound(hex);
 updateRoundUI();
 setSbar(true);
@@ -867,7 +881,7 @@ if (cur >= tgt && tgt > 0) { setHint('⛏ Target mined — settle now!', 'var(--
 setHint('Min: 10,000 sats · Target block #' + tgt.toLocaleString(), 'var(--m)');
 }
 
-// ─── ACTIONS ──────────────────────────────────────────────────────────────────
+// ─── ACTIONS ─────────────────────────────────────────────────────────────────
 async function placeBet(isEven) {
 if (!wallet) { alert('Connect OPWallet first'); return; }
 if (isBusy) return;
