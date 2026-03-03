@@ -262,6 +262,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Mono',monospace;font
   <span>&#x1F4E1; Connecting to OP_NET Regtest...</span>
   <code>opr1sqrl...p8vpx</code>
   <button onclick="showSettings()" style="margin-left:auto;background:transparent;border:1px solid rgba(247,147,26,0.4);color:var(--btc);padding:2px 8px;border-radius:4px;font-size:10px;cursor:pointer;font-family:inherit">&#x2699; Settings</button>
+  <button onclick="inspectWallet()" style="margin-left:4px;background:transparent;border:1px solid #333;color:#555;padding:2px 8px;border-radius:4px;font-size:10px;cursor:pointer;font-family:inherit">&#x1F50D; API</button>
 </div>
 
 <!-- Settings modal -->
@@ -626,13 +627,51 @@ async function rpcRead(sig, args = [], from = null) {
 async function rpcWrite(sig, args = [], sats = 0) {
   const opw = getOPWallet();
   if (!opw) throw new Error('OPWallet not found');
-  const calldata = mkCall(sig, ...args); // Uint8Array
-  console.log('[rpcWrite] sig=', sig, 'calldata len=', calldata.length, 'hex=', toHex(calldata).slice(0,20));
-  return opw.signAndBroadcastInteraction({
-    to: getContract(),
-    calldata: calldata,
-    value: BigInt(sats),
-  });
+
+  const calldataBytes = mkCall(sig, ...args); // Uint8Array
+  const calldataHex   = toHex(calldataBytes);
+  const contract      = getContract();
+
+  console.log('[rpcWrite] sig=', sig, 'to=', contract, 'calldata=', calldataHex, 'sats=', sats);
+  console.log('[rpcWrite] opw methods=', Object.keys(opw).filter(k => typeof opw[k] === 'function').join(', '));
+
+  // OPWallet accepts calldata as Uint8Array
+  // Try multiple formats in case API differs between versions
+  const params = {
+    to:       contract,
+    calldata: calldataBytes,
+    value:    BigInt(sats),
+  };
+
+  console.log('[rpcWrite] calling signAndBroadcastInteraction with', JSON.stringify({
+    to: params.to,
+    calldata: calldataHex,
+    value: sats.toString(),
+  }));
+
+  let result;
+  try {
+    result = await opw.signAndBroadcastInteraction(params);
+  } catch(e1) {
+    console.warn('[rpcWrite] Uint8Array failed:', e1.message, '— trying hex string');
+    try {
+      result = await opw.signAndBroadcastInteraction({
+        to:       contract,
+        calldata: calldataHex,
+        value:    BigInt(sats),
+      });
+    } catch(e2) {
+      console.warn('[rpcWrite] hex string failed:', e2.message, '— trying number value');
+      result = await opw.signAndBroadcastInteraction({
+        to:       contract,
+        calldata: calldataBytes,
+        value:    Number(sats),
+      });
+    }
+  }
+
+  console.log('[rpcWrite] result=', JSON.stringify(result));
+  return result;
 }
 
 // ─── WALLET ───────────────────────────────────────────────────────────────────
@@ -989,6 +1028,17 @@ async function doWithdraw() {
     myPending = 0n; hide('btnWd'); fetchBalance(); setTimeout(refreshMyBet, 5000);
   } catch(e) { alert('Failed: ' + e.message); b.disabled = false; }
 }
+// Debug: inspect OPWallet API
+async function inspectWallet() {
+  const opw = getOPWallet();
+  if (!opw) { alert('OPWallet not found'); return; }
+  const methods = Object.keys(opw).filter(k => typeof opw[k] === 'function');
+  const props   = Object.keys(opw).filter(k => typeof opw[k] !== 'function');
+  const msg = 'OPWallet methods:\n' + methods.join(', ') + '\n\nProperties:\n' + props.join(', ');
+  console.log(msg);
+  alert(msg);
+}
+
 async function doNewRound() {
   if (!wallet) { alert('Connect OPWallet first'); return; }
   const b = document.getElementById('btnNew');
