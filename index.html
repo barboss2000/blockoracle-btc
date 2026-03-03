@@ -630,13 +630,19 @@ async function rpcWrite(sig, args = [], sats = 0) {
   const contract      = getContract();
 
   console.log('[rpcWrite]', sig, '→', contract, 'value=', sats, 'calldata=', calldataHex);
+  console.log('[rpcWrite] opw keys:', Object.getOwnPropertyNames(opw));
 
-  // OPWallet signAndBroadcastInteraction — single call, no retries
-  return opw.signAndBroadcastInteraction({
+  // Try signAndBroadcastInteraction with hex calldata (OPWallet expects hex string)
+  const params = {
     to:       contract,
-    calldata: calldataBytes,
-    value:    BigInt(sats),
-  });
+    calldata: calldataHex,    // hex string with 0x prefix
+    value:    sats,           // number (satoshis)
+  };
+
+  console.log('[rpcWrite] params:', JSON.stringify(params));
+  const result = await opw.signAndBroadcastInteraction(params);
+  console.log('[rpcWrite] result:', JSON.stringify(result));
+  return result;
 }
 
 
