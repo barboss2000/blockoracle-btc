@@ -620,79 +620,56 @@ async function rpcRead(sig, args = [], from = null) {
   throw lastErr;
 }
 
-// ─── RPC WRITE ────────────────────────────────────────────────────────────────
+// RPC WRITE
 async function rpcWrite(sig, args = [], sats = 0) {
   const opw = getOPWallet();
-  if (!opw) throw new Error('OPWallet not found');
-
+  if (!opw) throw new Error("OPWallet not found");
   const calldataBytes = mkCall(sig, ...args);
-  const calldataHex   = '0x' + toHex(calldataBytes);
-  const contract      = getContract();
-
-  // Deep inspect: get ALL methods including prototype chain
-  const allFns = [];
-  let proto = opw;
-  while (proto && proto !== Object.prototype) {
-    Object.getOwnPropertyNames(proto).forEach(k => {
-      if (!allFns.includes(k)) { try { if (typeof opw[k] === 'function') allFns.push(k); } catch(e){} }
-    });
-    proto = Object.getPrototypeOf(proto);
-  }
-  console.log('[OPWallet ALL methods]:', allFns.join(', '));
-
-  const paramSets = [
-    { contractAddress: contract, calldata: calldataBytes, value: BigInt(sats), feeRate: 10, priorityFee: 0n },
-    { to: contract, calldata: calldataHex, value: sats, feeRate: 10, priorityFee: 0 },
-    { to: contract, calldata: calldataBytes, value: BigInt(sats), feeRate: 10, priorityFee: 0n },
-    { contractAddress: contract, calldata: calldataHex, value: sats, feeRate: 10, priorityFee: 0 },
+  const calldataHex = "0x" + toHex(calldataBytes);
+  const contract = getContract();
+  const allKeys = new Set();
+  try{Object.keys(opw).forEach(k=>allKeys.add(k));}catch(e){}
+  try{let p=opw;while(p&&p!==Object.prototype){Object.getOwnPropertyNames(p).forEach(k=>allKeys.add(k));p=Object.getPrototypeOf(p);}}catch(e){}
+  const allFns=[...allKeys].filter(k=>{try{return typeof opw[k]==="function";}catch(e){return false;}});
+  console.log("[OPWallet ALL methods]",allFns.join(", "));
+  const psets=[
+    {to:contract,calldata:calldataBytes,value:BigInt(sats),feeRate:10,priorityFee:50000n},
+    {contractAddress:contract,calldata:calldataBytes,value:BigInt(sats),feeRate:10,priorityFee:50000n},
+    {to:contract,calldata:calldataHex,value:sats,feeRate:10,priorityFee:50000},
+    {contractAddress:contract,calldata:calldataHex,value:sats,feeRate:10,priorityFee:50000},
+    {to:contract,calldata:calldataBytes,value:BigInt(sats),feeRate:10,priorityFee:0n},
+    {to:contract,calldata:calldataHex,value:sats,feeRate:10,priorityFee:0},
+    {to:contract,calldata:calldataHex,value:sats},
   ];
-
-  const methodNames = [
-    'signAndBroadcastInteraction', 'sendInteraction', 'signInteraction',
-    'broadcastInteraction', 'sendTransaction', 'signTransaction',
-    'sendContractInteraction', 'interact', 'execute',
-  ].filter(m => allFns.includes(m));
-
-  console.log('[rpcWrite] methods to try:', methodNames.join(', ') || 'NONE FOUND');
-
-  let lastErr = new Error('No working OPWallet method found. Available: ' + allFns.join(', '));
-  for (const method of methodNames) {
-    for (let pi = 0; pi < paramSets.length; pi++) {
-      try {
-        console.log('[rpcWrite]', method, 'param-set', pi+1);
-        const result = await opw[method](paramSets[pi]);
-        console.log('[rpcWrite] SUCCESS method=', method, 'pi=', pi+1);
-        return result;
-      } catch(e) {
-        console.warn('[rpcWrite]', method, 'pi=', pi+1, 'err:', e.message);
-        lastErr = e;
-        const msg = (e.message || '').toLowerCase();
-        if (msg.includes('reject') || msg.includes('denied') || msg.includes('cancel')) throw e;
-        if (msg.includes('approval') || msg.includes('active')) throw e;
+  const methods=["signAndBroadcastInteraction","sendInteraction","signInteraction","broadcastInteraction","sendTransaction","signTransaction","sendContractInteraction","interact","execute"];
+  let lastErr=new Error("All methods failed | found: "+allFns.join(","));
+  for(const m of methods){
+    let fn;try{fn=opw[m];}catch(e){continue;}
+    if(typeof fn!=="function"){console.log("[rpcWrite] skip",m);continue;}
+    for(let i=0;i<psets.length;i++){
+      try{
+        console.log("[rpcWrite] TRY",m,"#"+(i+1),"pf="+String(psets[i].priorityFee),"cd="+typeof psets[i].calldata);
+        const r=await fn.call(opw,psets[i]);
+        console.log("[rpcWrite] SUCCESS!",m,"#"+(i+1));
+        return r;
+      }catch(e){
+        const msg=(e.message||"").toLowerCase();
+        console.warn("[rpcWrite]",m,"#"+(i+1),":",e.message);
+        lastErr=e;
+        if(msg.includes("reject")||msg.includes("denied")||msg.includes("cancel"))throw e;
+        if(msg.includes("approval")||msg.includes("active"))throw e;
       }
     }
   }
-
-  // EIP-1193 request() fallback
-  if (allFns.includes('request')) {
-    const rpcMethods = ['opnet_sendInteraction', 'btc_sendInteraction', 'wallet_sendCalls'];
-    for (const rpcMethod of rpcMethods) {
-      try {
-        console.log('[rpcWrite] request()', rpcMethod);
-        const result = await opw.request({ method: rpcMethod, params: [paramSets[0]] });
-        console.log('[rpcWrite] request() SUCCESS:', rpcMethod);
-        return result;
-      } catch(e) {
-        console.warn('[rpcWrite] request()', rpcMethod, 'err:', e.message);
-        lastErr = e;
-        const msg = (e.message || '').toLowerCase();
-        if (msg.includes('reject') || msg.includes('denied') || msg.includes('cancel')) throw e;
-      }
+  if(typeof opw.request==="function"){
+    for(const rm of ["opnet_sendInteraction","btc_sendInteraction","wallet_sendCalls"]){
+      try{const r=await opw.request({method:rm,params:[psets[0]]});return r;}
+      catch(e){const msg=(e.message||"").toLowerCase();lastErr=e;if(msg.includes("reject")||msg.includes("cancel"))throw e;}
     }
   }
-
   throw lastErr;
 }
+
 
 
 
