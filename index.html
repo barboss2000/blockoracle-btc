@@ -625,21 +625,19 @@ async function rpcWrite(sig, args = [], sats = 0) {
   const opw = getOPWallet();
   if (!opw) throw new Error('OPWallet not found — install OPWallet extension');
 
-  const calldataBytes = mkCall(sig, ...args);
-  const calldataHex   = '0x' + toHex(calldataBytes);
-  const contract      = getContract();
+  const calldataHex = '0x' + toHex(mkCall(sig, ...args));
+  const contract    = getContract();
 
-  console.log('[rpcWrite]', sig, '→', contract, 'value=', sats, 'calldata=', calldataHex);
-  console.log('[rpcWrite] opw keys:', Object.getOwnPropertyNames(opw));
-
-  // Try signAndBroadcastInteraction with hex calldata (OPWallet expects hex string)
+  // OPWallet interaction params — matches OP-Sign working format
   const params = {
-    to:       contract,
-    calldata: calldataHex,    // hex string with 0x prefix
-    value:    sats,           // number (satoshis)
+    to:          contract,
+    calldata:    calldataHex,  // hex string with 0x prefix
+    value:       sats,         // satoshis as number
+    feeRate:     10,           // sat/vB — standard testnet fee
+    priorityFee: 0,            // opnet priority fee
   };
 
-  console.log('[rpcWrite] params:', JSON.stringify(params));
+  console.log('[rpcWrite]', sig, params.to, 'calldata=', calldataHex, 'sats=', sats);
   const result = await opw.signAndBroadcastInteraction(params);
   console.log('[rpcWrite] result:', JSON.stringify(result));
   return result;
@@ -931,38 +929,45 @@ function updateBtns() {
 // ─── ACTIONS ──────────────────────────────────────────────────────────────────
 async function placeBet(isEven) {
   if (!wallet) { alert('Connect OPWallet first'); return; }
+  if (isBusy) return;
   const sats = parseInt(document.getElementById('betAmt').value);
   if (!sats || sats < MIN_SATS) { alert('Minimum: ' + MIN_SATS.toLocaleString() + ' sats'); return; }
   isBusy = true; updateBtns(); setHint('⏳ Confirm in OPWallet...', 'var(--btc)');
   try {
     const r  = await rpcWrite('bet(bool,uint64)', [b8(isEven), u64be(sats)], sats);
     const tx = r?.txid ?? r?.txId ?? '';
-    setHint('✓ Broadcast!' + (tx ? ' · ' + tx.slice(0,14) + '...' : ''), 'var(--even)');
-    fetchBalance(); setTimeout(() => { refreshRound(); refreshMyBet(); }, 4000);
+    setHint('✓ Sent!' + (tx ? ' · ' + tx.slice(0,14) + '...' : '') + ' Waiting confirmation...', 'var(--even)');
+    fetchBalance(); setTimeout(() => { refreshRound(); refreshMyBet(); }, 8000);
   } catch(e) { setHint('❌ ' + (e.message || 'Failed'), 'var(--odd)'); }
   finally { isBusy = false; updateBtns(); }
 }
 async function doSettle() {
-  const b = document.getElementById('btnSettle'); b.disabled = true; b.innerText = '⏳ Settling...';
-  try { await rpcWrite('settle()', [], 0); setTimeout(refreshRound, 5000); }
+  const b = document.getElementById('btnSettle');
+  if (b.disabled) return;
+  b.disabled = true; b.innerText = '⏳ Confirm in OPWallet...';
+  try { await rpcWrite('settle()', [], 0); setTimeout(refreshRound, 8000); }
   catch(e) { alert('Failed: ' + e.message); b.disabled = false; b.innerText = '⛏ Settle Round'; }
 }
 async function doClaim() {
-  const b = document.getElementById('btnClaim'); b.disabled = true; b.innerText = '⏳ Claiming...';
+  const b = document.getElementById('btnClaim');
+  if (b.disabled) return;
+  b.disabled = true; b.innerText = '⏳ Confirm in OPWallet...';
   try {
     await rpcWrite('claim()', [], 0);
     const pb = document.getElementById('payBan');
     pb.className = 'pay-ban win show'; pb.innerHTML = '🏆 Claimed! Press Withdraw to receive BTC';
-    hide('btnClaim'); setTimeout(() => { refreshRound(); refreshMyBet(); }, 5000);
+    hide('btnClaim'); setTimeout(() => { refreshRound(); refreshMyBet(); }, 8000);
   } catch(e) { alert('Failed: ' + e.message); b.disabled = false; b.innerText = '🏆 Claim Winnings'; }
 }
 async function doWithdraw() {
-  const b = document.getElementById('btnWd'); b.disabled = true; b.innerText = '⏳ Withdrawing...';
+  const b = document.getElementById('btnWd');
+  if (b.disabled) return;
+  b.disabled = true; b.innerText = '⏳ Confirm in OPWallet...';
   try {
     await rpcWrite('withdraw()', [], 0);
     const pb = document.getElementById('payBan');
     pb.className = 'pay-ban win show'; pb.innerHTML = '💰 ' + s2btc(myPending) + ' BTC sent!';
-    myPending = 0n; hide('btnWd'); fetchBalance(); setTimeout(refreshMyBet, 5000);
+    myPending = 0n; hide('btnWd'); fetchBalance(); setTimeout(refreshMyBet, 8000);
   } catch(e) { alert('Failed: ' + e.message); b.disabled = false; }
 }
 
@@ -978,38 +983,40 @@ async function inspectWallet() {
   alert(msg);
 }
 
+let _newRoundBusy = false;
 async function doNewRound() {
+  if (_newRoundBusy) return; // prevent double-click
   if (!wallet) { alert('Connect OPWallet first'); return; }
+  _newRoundBusy = true;
   const b = document.getElementById('btnNew');
   b.disabled = true; b.innerText = '⏳ Confirm in OPWallet...';
   b.style.background = 'var(--m)'; b.style.color = '#000';
   try {
     const r = await rpcWrite('startNewRound()', [], 0);
     const tx = r?.txid ?? r?.txId ?? r?.hash ?? '';
-    b.innerText = '⏳ Broadcasting' + (tx ? ' · ' + tx.slice(0,10) + '...' : '') + ' (wait ~30s)';
+    b.innerText = '✓ Sent!' + (tx ? ' ' + tx.slice(0,12) + '...' : '') + ' Waiting...';
     document.getElementById('payBan').className = 'pay-ban';
     document.getElementById('resBan').className = 'res-ban';
     document.getElementById('hashBox').style.display = 'none';
     myBet = null; myPending = 0n;
     document.getElementById('myBet').innerText = '—';
     hideAll();
-    // Poll for round data - retry several times
     let tries = 0;
     const poll = async () => {
       tries++;
-      b.innerText = '⏳ Waiting for confirmation (' + tries + '/10)...';
+      b.innerText = '⏳ Confirming (' + tries + '/12)...';
       await refreshRound();
-      if (!round && tries < 10) setTimeout(poll, 6000);
-      else if (round) { b.style.background = ''; b.style.color = ''; }
+      if (!round && tries < 12) setTimeout(poll, 6000);
+      else { b.style.background = ''; b.style.color = ''; _newRoundBusy = false; }
     };
     setTimeout(poll, 8000);
   } catch(e) {
     console.error('doNewRound:', e);
-    const msg = e.message || String(e);
-    alert('Failed to start round:\n' + msg);
+    alert('Failed:\n' + (e.message || String(e)));
     b.disabled = false;
     b.innerText = '▶ Start First Round (Initialize Contract)';
     b.style.background = 'var(--btc)'; b.style.color = '#000';
+    _newRoundBusy = false;
   }
 }
 
