@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<title>BlockBet — Bitcoin L1 · OP_NET Regtest</title>
+<title>BlockBet — Bitcoin L1 · OP_NET Testnet</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800;900&display=swap" rel="stylesheet"/>
 <script src="https://s3.tradingview.com/tv.js"></script>
 <style>
@@ -259,8 +259,8 @@ body{background:var(--bg);color:var(--text);font-family:'DM Mono',monospace;font
 
 <!-- Status bar -->
 <div class="sbar warn" id="sbar">
-  <span>&#x1F4E1; Connecting to OP_NET Regtest...</span>
-  <code>opr1sqrl...p8vpx</code>
+  <span>&#x1F4E1; Connecting to OP_NET Testnet...</span>
+  <code>opt1sqqa...j30p9</code>
   <button onclick="showSettings()" style="margin-left:auto;background:transparent;border:1px solid rgba(247,147,26,0.4);color:var(--btc);padding:2px 8px;border-radius:4px;font-size:10px;cursor:pointer;font-family:inherit">&#x2699; Settings</button>
   <button onclick="inspectWallet()" style="margin-left:4px;background:transparent;border:1px solid #333;color:#555;padding:2px 8px;border-radius:4px;font-size:10px;cursor:pointer;font-family:inherit">&#x1F50D; API</button>
 </div>
@@ -275,8 +275,8 @@ body{background:var(--bg);color:var(--text);font-family:'DM Mono',monospace;font
     <label style="font-size:10px;color:#666;letter-spacing:1px;text-transform:uppercase;">Contract Address (opr1...)</label>
     <input id="inputContract" style="width:100%;background:#0a0a0a;border:1px solid #333;border-radius:6px;padding:8px 10px;font-size:11px;color:#fff;margin:6px 0 14px;outline:none;box-sizing:border-box;" placeholder="opr1..."/>
     <label style="font-size:10px;color:#666;letter-spacing:1px;text-transform:uppercase;">RPC URL</label>
-    <input id="inputRpc" style="width:100%;background:#0a0a0a;border:1px solid #333;border-radius:6px;padding:8px 10px;font-size:11px;color:#fff;margin:6px 0 4px;outline:none;box-sizing:border-box;" placeholder="https://regtest.opnet.org/api/v1/json-rpc"/>
-    <div style="font-size:10px;color:#555;margin-bottom:16px;">Variants: https://regtest.opnet.org/api/v1/json-rpc &nbsp;|&nbsp; http://localhost:3000/api/v1/json-rpc</div>
+    <input id="inputRpc" style="width:100%;background:#0a0a0a;border:1px solid #333;border-radius:6px;padding:8px 10px;font-size:11px;color:#fff;margin:6px 0 4px;outline:none;box-sizing:border-box;" placeholder="https://testnet.opnet.org/api/v1/json-rpc"/>
+    <div style="font-size:10px;color:#555;margin-bottom:16px;">Variants: https://testnet.opnet.org/api/v1/json-rpc &nbsp;|&nbsp; http://localhost:3000/api/v1/json-rpc</div>
     <button onclick="applySettings()" style="width:100%;background:var(--btc);color:#000;border:none;padding:10px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">Apply &amp; Reload</button>
   </div>
 </div>
@@ -433,19 +433,16 @@ body{background:var(--bg);color:var(--text);font-family:'DM Mono',monospace;font
 
 <script>
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
-const CONTRACT = 'opr1sqrlcf8xrc23pjasncl97yq3sh39xp3xs3u7p8vpx';
+const CONTRACT = 'opt1sqqat6q5668ckvr5ger3xyrlp5mtayfeg3vxj30p9';
 // Runtime override: if user changes contract via Settings, this returns new value
 function getContract() { return window._contractOverride || CONTRACT; }
 // bcrt1 equivalent (same witness program, different HRP)
-const CONTRACT_BCRT = 'bcrt1sqrlcf8xrc23pjasncl97yq3sh39xp3xs3uwkjl8f';
+const CONTRACT_BCRT = 'tb1sqqat6q5668ckvr5ger3xyrlp5mtayfegag5m0c39';
 // RPC endpoints — first working one is used automatically
 // Edit RPC directly in the UI (gear icon) or change here
 const RPC_URLS = [
-  'https://regtest.opnet.org/api/v1/json-rpc',
-  'https://regtest.opnet.org/json-rpc',
-  'http://localhost:3000/api/v1/json-rpc',
-  'http://localhost:9001/api/v1/json-rpc',
-  'http://127.0.0.1:3000/api/v1/json-rpc',
+  'https://testnet.opnet.org/api/v1/json-rpc',
+  'https://testnet.opnet.org/json-rpc',
 ];
 const MIN_SATS = 10000;
 
@@ -647,7 +644,7 @@ async function rpcWrite(sig, args = [], sats = 0) {
 async function connectWallet() {
   const opw = getOPWallet();
   if (!opw) {
-    alert('OPWallet не обнаружен!\n\nУстановите OPWallet:\ngithub.com/btc-vision/opwallet/releases\n\nЗатем:\n1. OPWallet → Settings → Network → Regtest\n2. Получите tBTC: faucet.opnet.org');
+    alert('OPWallet не обнаружен!\n\nУстановите OPWallet:\ngithub.com/btc-vision/opwallet/releases\n\nЗатем:\n1. OPWallet → Settings → Network → Testnet\n2. Получите tBTC: faucet.opnet.org');
     return;
   }
   const btn = document.getElementById('btnConn');
@@ -839,7 +836,7 @@ function setSbar(ok, err) {
   const el = document.getElementById('sbar');
   if (ok) {
     el.className = 'sbar ok';
-    el.innerHTML = '<span>🟢 OP_NET Regtest · Contract live</span><code>opr1sqrl...p8vpx</code>' +
+    el.innerHTML = '<span>🟢 OP_NET Testnet · Contract live</span><code>opt1sqqa...j30p9</code>' +
       '<button onclick="showSettings()" style="margin-left:auto;background:transparent;border:1px solid rgba(247,147,26,0.4);color:var(--btc);padding:2px 8px;border-radius:4px;font-size:10px;cursor:pointer;font-family:inherit">&#x2699; Settings</button>';
   } else {
     el.className = 'sbar err';
