@@ -720,21 +720,10 @@ async function refreshRound() {
       setHint('⚠️ No round data — start first round to initialize', 'var(--odd)');
       show('btnNew');
       document.getElementById('btnNew').innerText = '▶ Start First Round (Initialize)';
-      showDiag(
-        'Contract: ' + getContract() + '\n\n' +
-        'Response empty — contract may need initialization.\n' +
-        'Try clicking "Start First Round" above.\n\n' +
-        'Or test in browser console (F12):\n' +
-        'fetch("https://regtest.opnet.org/api/v1/json-rpc",{method:"POST",' +
-        'headers:{"Content-Type":"application/json"},' +
-        'body:JSON.stringify({jsonrpc:"2.0",id:1,method:"btc_call",' +
-        'params:["' + getContract() + '","5a699467"]})})' +
-        '.then(r=>r.json()).then(j=>console.log(JSON.stringify(j)))'
-      );
+      console.warn('[BlockBet] Empty response from contract:', getContract());
       return;
     }
     round = decRound(hex);
-    hideDiag();
     updateRoundUI();
     setSbar(true);
   } catch(e) {
