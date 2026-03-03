@@ -531,24 +531,62 @@ const decPending = h => new D(h).u256();
 // ─── RPC READ ─────────────────────────────────────────────────────────────────
 async function rpcRead(sig, args = [], from = null) {
   const cd  = mkCall(sig, ...args);
-  // Try both opr1 and bcrt1 forms of the contract address
-  const baseAddr = window._contractOverride || getContract();
-  const addrs = baseAddr === getContract()
-    ? [getContract(), CONTRACT_BCRT]
-    : [baseAddr];
-  const frm = from || wallet?.address || null;
-  // Build all param combinations: [addr, calldata, from?] × [opr1, bcrt1]
-  const paramSets = [];
-  for (const addr of addrs) {
-    if (frm) paramSets.push([addr, cd, frm]);
-    paramSets.push([addr, cd]);
+  const addr = window._contractOverride || getContract();
+
+  // ── Method 1: Use OPWallet provider (avoids CORS) ──────────────────────────
+  if (window.opnet?.provider?.call) {
+    try {
+      const result = await window.opnet.provider.call({
+        to: addr,
+        data: cd,
+      });
+      const d = (result || '').replace(/^0x/, '');
+      console.log('[RPC opnet.provider] len=', d.length);
+      workingRpc = '__opnet_provider__';
+      return d;
+    } catch(e) {
+      console.warn('[RPC opnet.provider failed]', e.message);
+    }
   }
-  const urls = workingRpc
+
+  // ── Method 2: OPWallet callReadOnly / readContract ──────────────────────────
+  if (window.opnet?.callReadOnly || window.opnet?.readContract) {
+    try {
+      const fn = window.opnet.callReadOnly || window.opnet.readContract;
+      const result = await fn({ to: addr, data: cd });
+      const d = (result?.result || result?.data || result || '').toString().replace(/^0x/, '');
+      console.log('[RPC callReadOnly] len=', d.length);
+      workingRpc = '__opnet_callReadOnly__';
+      return d;
+    } catch(e) {
+      console.warn('[RPC callReadOnly failed]', e.message);
+    }
+  }
+
+  // ── Method 3: Direct fetch with CORS proxy fallback ─────────────────────────
+  const baseAddr = addr;
+  const addrs = [baseAddr, CONTRACT_BCRT];
+  const frm = from || wallet?.address || null;
+  const paramSets = [];
+  for (const a of addrs) {
+    if (frm) paramSets.push([a, cd, frm]);
+    paramSets.push([a, cd]);
+  }
+
+  // Try CORS proxy if direct fetch fails
+  const PROXY = 'https://corsproxy.io/?';
+  const directUrls = workingRpc && workingRpc !== '__opnet_provider__' && workingRpc !== '__opnet_callReadOnly__'
     ? [workingRpc, ...RPC_URLS.filter(u => u !== workingRpc)]
     : RPC_URLS;
 
-  let lastErr = null;
-  for (const url of urls) {
+  // Add CORS-proxied versions as fallback
+  const allUrls = [
+    ...directUrls,
+    ...directUrls.map(u => PROXY + encodeURIComponent(u)),
+  ];
+
+  let lastErr = new Error('All RPC endpoints failed');
+  for (const url of allUrls) {
     for (const params of paramSets) {
       try {
         const resp = await fetch(url, {
@@ -557,30 +595,30 @@ async function rpcRead(sig, args = [], from = null) {
           body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'btc_call', params }),
           signal: AbortSignal.timeout(8000),
         });
-        if (!resp.ok) { lastErr = new Error('HTTP ' + resp.status); break; }
+        if (!resp.ok) { lastErr = new Error('HTTP ' + resp.status); continue; }
         const j = await resp.json();
         if (j.error) {
-          const msg = j.error?.message || String(j.error);
-          console.warn('[RPC ERR]', sig, url, params.length > 2 ? '+from' : 'no-from', msg);
+          const msg = typeof j.error === 'object' ? j.error.message : String(j.error);
+          console.warn('[RPC ERR]', sig, url, msg);
           lastErr = new Error(msg);
-          if (msg.toLowerCase().includes('address') || msg.toLowerCase().includes('sender')) continue;
-          break;
+          continue;
         }
-        let d = typeof j.result === 'string' ? j.result
-          : (j.result?.result ?? j.result?.data ?? j.result?.hex ?? '');
-        if (d.startsWith('0x')) d = d.slice(2);
-        console.log('[RPC OK]', sig, 'addr=' + params[0].slice(0,12) + '...', 'len=' + d.length, params.length > 2 ? '+from' : 'no-from');
-        if (d.length === 0) {
-          console.warn('[RPC EMPTY]', sig, 'addr=' + params[0], '- contract may not exist at this address or function selector mismatch');
-          lastErr = new Error('Contract returned empty data (len=0) — check contract address');
-          continue; // try next addr/params combo
+        let d = '';
+        if (typeof j.result === 'string') d = j.result;
+        else if (j.result?.result) d = j.result.result;
+        else if (j.result?.data)   d = j.result.data;
+        d = d.replace(/^0x/, '');
+        if (!d) {
+          console.warn('[RPC EMPTY]', sig, 'addr=' + params[0]);
+        } else {
+          console.log('[RPC OK]', sig, 'via', url.slice(0,40), 'len=', d.length);
+          workingRpc = url;
         }
-        workingRpc = url;
         return d;
-      } catch(e) { lastErr = e; console.warn('[RPC FAIL]', url, e.message); }
+      } catch(e) { lastErr = e; console.warn('[RPC FAIL]', url.slice(0,50), e.message); }
     }
   }
-  throw lastErr || new Error('All RPC endpoints failed');
+  throw lastErr;
 }
 
 // ─── RPC WRITE ────────────────────────────────────────────────────────────────
@@ -706,65 +744,6 @@ async function refreshRound() {
   }
 }
 
-async function verifyContract() {
-  // Try btc_getCode to check if contract exists
-  try {
-    const r = await fetch('https://regtest.opnet.org/api/v1/json-rpc', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({jsonrpc:'2.0',id:1,method:'btc_getCode',params:[getContract()]}),
-      signal: AbortSignal.timeout(6000),
-    });
-    if (r.ok) {
-      const j = await r.json();
-      console.log('[verifyContract] btc_getCode:', JSON.stringify(j).slice(0,200));
-      if (j.result && j.result !== '0x' && j.result !== '') {
-        console.log('[verifyContract] ✅ Contract exists');
-      } else {
-        console.warn('[verifyContract] ⚠️ btc_getCode returned empty — contract may not exist');
-      }
-    }
-  } catch(e) { console.warn('[verifyContract] btc_getCode failed:', e.message); }
-}
-
-function showDiag(msg) {
-  let el = document.getElementById('diagBox');
-  if (!el) {
-    el = document.createElement('div');
-    el.id = 'diagBox';
-    el.style.cssText = 'background:rgba(248,113,113,0.08);border:1px solid rgba(248,113,113,0.3);' +
-      'border-radius:6px;padding:10px 12px;margin:8px 0;font-size:10px;color:#f87171;' +
-      'white-space:pre-wrap;line-height:1.6;';
-    const betForm = document.querySelector('.bet-form');
-    betForm.insertBefore(el, betForm.firstChild);
-  }
-  el.innerHTML = '⚠️ <strong>Contract Debug Info:</strong>\n' + msg +
-    '\n\n<strong>What to do:</strong>\n' +
-    '→ Run: <code style="color:var(--btc)">opnet contract:get ' + getContract() + ' --network regtest</code>\n' +
-    '→ Or paste correct contract address below:\n' +
-    '<input id="contractInput" placeholder="opr1..." style="width:100%;background:#111;border:1px solid #333;' +
-    'border-radius:4px;padding:4px 8px;color:#fff;font-family:DM Mono,monospace;font-size:10px;margin-top:4px;" ' +
-    'value="' + getContract() + '"/>\n' +
-    '<button onclick="updateContract()" style="margin-top:4px;padding:3px 10px;background:var(--btc);' +
-    'color:#000;border:none;border-radius:4px;cursor:pointer;font-size:10px;">Update & Retry</button>';
-}
-
-function hideDiag() {
-  const el = document.getElementById('diagBox');
-  if (el) el.remove();
-}
-
-function updateContract() {
-  const val = document.getElementById('contractInput')?.value?.trim();
-  if (val && val.length > 10) {
-    workingRpc = null;
-    // Dynamically update getContract()
-    window._contractOverride = val;
-    console.log('[BlockBet] Contract updated to:', val);
-    hideDiag();
-    refreshRound();
-  }
-}
 
 async function refreshMyBet() {
   if (!opnetAddr || !wallet) return;
