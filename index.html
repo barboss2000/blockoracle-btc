@@ -499,7 +499,8 @@ function fnvSel(sig) {
   for (let i = 0; i < sig.length; i++) { h ^= sig.charCodeAt(i); h = (Math.imul(h, 0x01000193) >>> 0); }
   const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, h, true); return b;
 }
-const mkCall = (sig, ...args) => toHex(cat(fnvSel(sig), ...args));
+const mkCall = (sig, ...args) => cat(fnvSel(sig), ...args); // returns Uint8Array
+const mkCallHex = (sig, ...args) => toHex(mkCall(sig, ...args)); // hex for RPC reads
 const s2btc  = s => (Number(s) / 1e8).toFixed(8).replace(/\.?0+$/, '') || '0';
 async function sha256hex(hex) {
   const h = await crypto.subtle.digest('SHA-256', fromHex(hex).buffer);
@@ -530,7 +531,7 @@ const decPending = h => new D(h).u256();
 
 // ─── RPC READ ─────────────────────────────────────────────────────────────────
 async function rpcRead(sig, args = [], from = null) {
-  const cd  = mkCall(sig, ...args);
+  const cd  = mkCallHex(sig, ...args);
   const addr = window._contractOverride || getContract();
 
   // ── Method 1: Use OPWallet provider (avoids CORS) ──────────────────────────
@@ -625,8 +626,12 @@ async function rpcRead(sig, args = [], from = null) {
 async function rpcWrite(sig, args = [], sats = 0) {
   const opw = getOPWallet();
   if (!opw) throw new Error('OPWallet not found');
+  const calldata = mkCall(sig, ...args); // Uint8Array
+  console.log('[rpcWrite] sig=', sig, 'calldata len=', calldata.length, 'hex=', toHex(calldata).slice(0,20));
   return opw.signAndBroadcastInteraction({
-    to: getContract(), calldata: mkCall(sig, ...args), value: sats,
+    to: getContract(),
+    calldata: calldata,
+    value: BigInt(sats),
   });
 }
 
