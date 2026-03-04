@@ -625,46 +625,38 @@ async function rpcWrite(sig, args = [], sats = 0) {
   const opw = getOPWallet();
   if (!opw) throw new Error("OPWallet not found");
   const calldataBytes = mkCall(sig, ...args);
-  const calldataHex = "0x" + toHex(calldataBytes);
   const contract = getContract();
-  const allKeys = new Set();
-  try{Object.keys(opw).forEach(k=>allKeys.add(k));}catch(e){}
-  try{let p=opw;while(p&&p!==Object.prototype){Object.getOwnPropertyNames(p).forEach(k=>allKeys.add(k));p=Object.getPrototypeOf(p);}}catch(e){}
-  const allFns=[...allKeys].filter(k=>{try{return typeof opw[k]==="function";}catch(e){return false;}});
-  console.log("[OPWallet ALL methods]",allFns.join(", "));
-  const psets=[
-    {to:contract,calldata:calldataBytes,value:BigInt(sats),feeRate:10,priorityFee:50000n},
-    {contractAddress:contract,calldata:calldataBytes,value:BigInt(sats),feeRate:10,priorityFee:50000n},
-    {to:contract,calldata:calldataHex,value:sats,feeRate:10,priorityFee:50000},
-    {contractAddress:contract,calldata:calldataHex,value:sats,feeRate:10,priorityFee:50000},
-    {to:contract,calldata:calldataBytes,value:BigInt(sats),feeRate:10,priorityFee:0n},
-    {to:contract,calldata:calldataHex,value:sats,feeRate:10,priorityFee:0},
-    {to:contract,calldata:calldataHex,value:sats},
-  ];
-  const methods=["signAndBroadcastInteraction","sendInteraction","signInteraction","broadcastInteraction","sendTransaction","signTransaction","sendContractInteraction","interact","execute"];
-  let lastErr=new Error("All methods failed | found: "+allFns.join(","));
-  for(const m of methods){
-    let fn;try{fn=opw[m];}catch(e){continue;}
-    if(typeof fn!=="function"){console.log("[rpcWrite] skip",m);continue;}
-    for(let i=0;i<psets.length;i++){
-      try{
-        console.log("[rpcWrite] TRY",m,"#"+(i+1),"pf="+String(psets[i].priorityFee),"cd="+typeof psets[i].calldata);
-        const r=await fn.call(opw,psets[i]);
-        console.log("[rpcWrite] SUCCESS!",m,"#"+(i+1));
-        return r;
-      }catch(e){
-        const msg=(e.message||"").toLowerCase();
-        console.warn("[rpcWrite]",m,"#"+(i+1),":",e.message);
-        lastErr=e;
-        if(msg.includes("reject")||msg.includes("denied")||msg.includes("cancel"))throw e;
-        if(msg.includes("approval")||msg.includes("active"))throw e;
-      }
-    }
-  }
-  if(typeof opw.request==="function"){
-    for(const rm of ["opnet_sendInteraction","btc_sendInteraction","wallet_sendCalls"]){
-      try{const r=await opw.request({method:rm,params:[psets[0]]});return r;}
-      catch(e){const msg=(e.message||"").toLowerCase();lastErr=e;if(msg.includes("reject")||msg.includes("cancel"))throw e;}
+
+  // Точный формат из перехвата реального вызова signInteraction в OP-Sign:
+  // { contract, calldata (Uint8Array), priorityFee: "0", gasSatFee: "880", feeRate: 10, to, from, utxos, network, optionalInputs, optionalOutputs }
+  // НО: мы передаём только то что нужно — остальное (utxos, network, from) wallet добавляет сам через queryContractInformation
+  // Ключевые поля: to = адрес контракта, calldata = Uint8Array, priorityFee = "0", feeRate = 10
+
+  const params = {
+    to: contract,
+    calldata: calldataBytes,  // Uint8Array — wallet сам конвертирует через функцию t()
+    priorityFee: "0",
+    feeRate: 10,
+  };
+
+  // Попробуем сначала signInteraction (именно его использует OP-Sign)
+  // затем signAndBroadcastInteraction как запасной
+  const methods = ["signInteraction", "signAndBroadcastInteraction"];
+  let lastErr = new Error("All methods failed");
+
+  for (const m of methods) {
+    let fn; try { fn = opw[m]; } catch(e) { continue; }
+    if (typeof fn !== "function") { console.log("[rpcWrite] skip", m); continue; }
+    try {
+      console.log("[rpcWrite] TRY", m, "calldata=Uint8Array len="+calldataBytes.length);
+      const r = await fn.call(opw, params);
+      console.log("[rpcWrite] SUCCESS!", m, r);
+      return r;
+    } catch(e) {
+      const msg = (e.message || "").toLowerCase();
+      console.warn("[rpcWrite]", m, ":", e.message);
+      lastErr = e;
+      if (msg.includes("reject") || msg.includes("denied") || msg.includes("cancel")) throw e;
     }
   }
   throw lastErr;
