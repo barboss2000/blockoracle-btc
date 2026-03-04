@@ -251,7 +251,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Mono',monospace;font
   </div>
   <div class="hdr-right">
     <a href="https://faucet.opnet.org/" target="_blank" class="btn-faucet">💧 Faucet</a>
-    <div class="badge"><div class="bdot"></div>TESTNET</div>
+    <div class="badge"><div class="bdot"></div>REGTEST</div>
     <button class="btn-conn off" id="btnConn" onclick="connectWallet()">Connect OPWallet</button>
     <button class="btn-disc" id="btnDisc" onclick="disconnectWallet()">✕ Disconnect</button>
   </div>
@@ -433,7 +433,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Mono',monospace;font
 
 <script>
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
-const CONTRACT = 'opt1sqqat6q5668ckvr5ger3xyrlp5mtayfeg3vxj30p9';
+const CONTRACT = 'opr1sqp6szazjvrnxrrqnrds8d6xjld9dyzskssrd5dlf';
 // Runtime override: if user changes contract via Settings, this returns new value
 function getContract() { return window._contractOverride || CONTRACT; }
 // bcrt1 equivalent (same witness program, different HRP)
@@ -441,8 +441,10 @@ const CONTRACT_BCRT = 'tb1sqqat6q5668ckvr5ger3xyrlp5mtayfegag5m0c39';
 // RPC endpoints — first working one is used automatically
 // Edit RPC directly in the UI (gear icon) or change here
 const RPC_URLS = [
+  'https://regtest.opnet.org/api/v1/json-rpc',
+  'http://localhost:3000/api/v1/json-rpc',
   'https://testnet.opnet.org/api/v1/json-rpc',
-  'https://testnet.opnet.org/json-rpc',
+];
 ];
 const MIN_SATS = 10000;
 
@@ -696,7 +698,7 @@ async function connectWallet() {
       console.log('[connectWallet] network=', networkName);
     } catch(e) { console.log('getNetwork not available'); }
 
-    const onWrongNetwork = isRegtest || networkName.includes('regtest') || networkName.includes('mainnet');
+    const onWrongNetwork = networkName.includes('mainnet');
     if (onWrongNetwork) {
       btn.innerText = 'Connect OPWallet'; btn.disabled = false; btn.onclick = connectWallet;
       alert('Wrong network! OPWallet is on ' + (networkName || (isRegtest ? 'Regtest' : 'unknown')) + '.\n\nPlease switch to TESTNET:\nOPWallet Settings Network Testnet\n\nContract: opt1sqqat6q5668ckvr5ger3xyrlp5mtayfeg3vxj30p9');
