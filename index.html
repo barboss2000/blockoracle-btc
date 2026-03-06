@@ -434,29 +434,46 @@ body{background:var(--bg);color:var(--text);font-family:'DM Mono',monospace;font
 </div><!-- app -->
 
 <script>
-// ─── FIX #1 & #2: Safe EVM/StacksProvider isolation ──────────────────────────
-// Wraps in try/catch to prevent "Cannot redefine property" TypeError
-// from conflicting browser extensions (MetaMask, Stacks, etc.)
-(function isolateEVM() {
-  // FIX: use try/catch instead of just checking window.ethereum
-  // This prevents TypeError when MetaMask defines ethereum as non-configurable
-  try {
-    if (window.ethereum) {
-      console.log('[BlockBet] EVM wallet detected — ignored, using OPWallet only');
+// ─── EVM ISOLATION: intercept extension conflicts before they throw ───────────
+// MetaMask / evmMask / StacksProvider all try to redefine window.ethereum
+// which is already set as non-configurable by the first extension that loaded.
+// We intercept Object.defineProperty globally so these re-definition attempts
+// silently fail instead of throwing uncaught TypeErrors into the console.
+(function patchDefineProperty() {
+  const _def = Object.defineProperty.bind(Object);
+  const BLOCKED = ['ethereum', 'web3', 'StacksProvider'];
+  Object.defineProperty = function(obj, prop, desc) {
+    if (obj === window && BLOCKED.includes(prop)) {
+      // Check if property already exists and is non-configurable
+      const existing = Object.getOwnPropertyDescriptor(obj, prop);
+      if (existing && !existing.configurable) {
+        // Silently skip — extension conflict, not our code
+        return obj;
+      }
     }
-  } catch(e) {
-    // Silently ignore — MetaMask or another extension owns window.ethereum
-    console.log('[BlockBet] EVM property access blocked (extension conflict) — OK, ignored');
-  }
-
-  // FIX #2: Don't touch StacksProvider at all — just log safely
-  try {
-    if (window.StacksProvider) {
-      console.log('[BlockBet] StacksProvider detected — ignored');
+    try {
+      return _def(obj, prop, desc);
+    } catch(e) {
+      // Last-resort: swallow extension re-define errors
+      console.debug('[BlockBet] Suppressed defineProperty conflict on', prop);
+      return obj;
     }
-  } catch(e) {
-    console.log('[BlockBet] StacksProvider access blocked — OK, ignored');
-  }
+  };
+  // Also patch defineProperties (used by inpage.js)
+  const _defProps = Object.defineProperties.bind(Object);
+  Object.defineProperties = function(obj, props) {
+    if (obj === window) {
+      for (const prop of Object.keys(props || {})) {
+        if (BLOCKED.includes(prop)) {
+          const existing = Object.getOwnPropertyDescriptor(obj, prop);
+          if (existing && !existing.configurable) {
+            delete props[prop]; // remove conflicting key before calling original
+          }
+        }
+      }
+    }
+    try { return _defProps(obj, props); } catch(e) { return obj; }
+  };
 })();
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
@@ -634,35 +651,55 @@ async function rpcRead(sig, args = [], from = null) {
 async function rpcWrite(sig, args = [], sats = 0) {
   const opw = getOPWallet();
   if (!opw) throw new Error("OPWallet not found");
+
   const calldataBytes = mkCall(sig, ...args);
-  const contract = getContract();
+  const calldataHex   = '0x' + toHex(calldataBytes);
+  const contract      = getContract();
 
-  const params = {
-    to: contract,
-    calldata: calldataBytes,
-    priorityFee: "0",
-    feeRate: 10,
-  };
+  // OPWallet accepts calldata in multiple formats depending on version.
+  // We try all known formats: Uint8Array, hex string, Buffer-like array.
+  const paramVariants = [
+    // v1: Uint8Array (latest OP-Sign format)
+    { to: contract, calldata: calldataBytes,                      priorityFee: "0", feeRate: 10 },
+    // v2: hex string with 0x prefix
+    { to: contract, calldata: calldataHex,                        priorityFee: "0", feeRate: 10 },
+    // v3: plain hex string without 0x
+    { to: contract, calldata: toHex(calldataBytes),               priorityFee: "0", feeRate: 10 },
+    // v4: data field alias (some older builds use 'data' not 'calldata')
+    { to: contract, data:     calldataHex,                        priorityFee: "0", feeRate: 10 },
+    // v5: Array.from Uint8Array (JSON-serialisable, used by some RPC bridges)
+    { to: contract, calldata: Array.from(calldataBytes),          priorityFee: "0", feeRate: 10 },
+  ];
 
-  const methods = ["signInteraction", "signAndBroadcastInteraction"];
-  let lastErr = new Error("All methods failed");
+  // Method priority: signInteraction is the correct OP_NET method
+  const methods = ["signInteraction", "signAndBroadcastInteraction", "sendTransaction"];
+  let lastErr = new Error("All write methods failed");
 
   for (const m of methods) {
     let fn;
     try { fn = opw[m]; } catch(e) { continue; }
-    if (typeof fn !== "function") { console.log("[rpcWrite] skip", m); continue; }
-    try {
-      console.log("[rpcWrite] TRY", m, "calldata len=" + calldataBytes.length);
-      const r = await fn.call(opw, params);
-      console.log("[rpcWrite] SUCCESS!", m, r);
-      return r;
-    } catch(e) {
-      const msg = (e.message || "").toLowerCase();
-      console.warn("[rpcWrite]", m, ":", e.message);
-      lastErr = e;
-      // FIX #4: Immediately propagate user rejection — don't try other methods
-      if (msg.includes("reject") || msg.includes("denied") || msg.includes("cancel") || msg.includes("user refused")) {
-        throw e;
+    if (typeof fn !== "function") { console.log("[rpcWrite] skip (not a function):", m); continue; }
+
+    for (const params of paramVariants) {
+      try {
+        console.log("[rpcWrite] TRY", m,
+          "calldata type=" + typeof params.calldata,
+          "len=" + calldataBytes.length);
+        const r = await fn.call(opw, params);
+        console.log("[rpcWrite] SUCCESS!", m, r);
+        return r;
+      } catch(e) {
+        const msg = (e.message || '').toLowerCase();
+        // User cancelled — stop immediately, don't try other variants
+        if (msg.includes("reject") || msg.includes("denied") || msg.includes("cancel")
+            || msg.includes("user refused") || msg.includes("user declined")
+            || msg.includes("dismissed")) {
+          throw e;
+        }
+        // "black window" / popup showed but empty — OPWallet internal error
+        // These are non-recoverable for this param variant, try next
+        console.warn("[rpcWrite]", m, JSON.stringify({calldataType: typeof params.calldata}), e.message);
+        lastErr = e;
       }
     }
   }
@@ -1027,10 +1064,23 @@ async function doWithdraw() {
 async function inspectWallet() {
   const opw = getOPWallet();
   if (!opw) { alert('OPWallet not found'); return; }
-  const methods = Object.keys(opw).filter(k => typeof opw[k] === 'function');
-  const props   = Object.keys(opw).filter(k => typeof opw[k] !== 'function');
-  const msg = 'Methods:\n' + methods.join(', ') + '\n\nProperties:\n' + props.join(', ');
-  console.log(msg); alert(msg);
+  const methods = [];
+  const props   = [];
+  for (const k of Object.keys(opw)) {
+    if (typeof opw[k] === 'function') methods.push(k);
+    else props.push(k + '=' + JSON.stringify(opw[k])?.slice(0,40));
+  }
+  // Also check prototype methods
+  const proto = Object.getPrototypeOf(opw);
+  if (proto) {
+    for (const k of Object.getOwnPropertyNames(proto)) {
+      if (k !== 'constructor' && typeof opw[k] === 'function' && !methods.includes(k)) {
+        methods.push(k + ' (proto)');
+      }
+    }
+  }
+  const msg = 'OPWallet Methods:\n' + methods.join(', ') + '\n\nProperties:\n' + props.join('\n');
+  console.log('[inspectWallet]', msg); alert(msg);
 }
 
 let _newRoundBusy = false;
