@@ -486,14 +486,30 @@ const RPC_URLS = [
 ];
 const MIN_SATS = 10000;
 
-// FIX #3: Safe OPWallet getter — never touches window.ethereum
+// Safe OPWallet getter — scans all known injection points, never touches window.ethereum
 function getOPWallet() {
-  try {
-    if (window.opnet) return window.opnet;
-  } catch(e) { /* extension conflict */ }
-  try {
-    if (window.unisat && window.unisat.opnet) return window.unisat.opnet;
-  } catch(e) { /* extension conflict */ }
+  const candidates = [
+    () => window.opnet,
+    () => window.OPNet,
+    () => window.opwallet,
+    () => window.OPWallet,
+    () => window.unisat?.opnet,
+    () => window.bitcoin,
+    () => window.btc,
+    () => window.opnetWallet,
+  ];
+  for (const fn of candidates) {
+    try {
+      const w = fn();
+      if (w && typeof w === 'object') {
+        if (typeof w.requestAccounts === 'function' ||
+            typeof w.signInteraction === 'function' ||
+            typeof w.signAndBroadcastInteraction === 'function') {
+          return w;
+        }
+      }
+    } catch(e) { /* skip */ }
+  }
   return null;
 }
 
@@ -648,62 +664,87 @@ async function rpcRead(sig, args = [], from = null) {
 }
 
 // ─── RPC WRITE ────────────────────────────────────────────────────────────────
+// OPWallet popup shows black/empty when secp256k1 WASM fails to compile.
+// Strategy: try all known write methods × all known calldata formats.
+// If all fail, surface a clear error with debug info.
 async function rpcWrite(sig, args = [], sats = 0) {
   const opw = getOPWallet();
-  if (!opw) throw new Error("OPWallet not found");
+  if (!opw) throw new Error("OPWallet not found — install from github.com/btc-vision/opwallet/releases");
 
   const calldataBytes = mkCall(sig, ...args);
   const calldataHex   = '0x' + toHex(calldataBytes);
   const contract      = getContract();
 
-  // OPWallet accepts calldata in multiple formats depending on version.
-  // We try all known formats: Uint8Array, hex string, Buffer-like array.
+  // Log available methods for debugging
+  const availMethods = [];
+  const WRITE_METHODS = [
+    "signInteraction","signAndBroadcastInteraction","sendTransaction",
+    "sendBitcoin","btc_sendTransaction","signPsbt","pushTx",
+    "interact","call","send",
+  ];
+  for (const m of WRITE_METHODS) {
+    try { if (typeof opw[m] === 'function') availMethods.push(m); } catch(e){}
+  }
+  // Also check prototype
+  try {
+    const proto = Object.getPrototypeOf(opw);
+    if (proto) {
+      for (const m of Object.getOwnPropertyNames(proto)) {
+        if (m !== 'constructor' && typeof opw[m] === 'function' && !availMethods.includes(m)) {
+          availMethods.push(m + '(proto)');
+        }
+      }
+    }
+  } catch(e){}
+  console.log('[rpcWrite] available methods:', availMethods.join(', '));
+
+  // All calldata format variants
   const paramVariants = [
-    // v1: Uint8Array (latest OP-Sign format)
-    { to: contract, calldata: calldataBytes,                      priorityFee: "0", feeRate: 10 },
-    // v2: hex string with 0x prefix
-    { to: contract, calldata: calldataHex,                        priorityFee: "0", feeRate: 10 },
-    // v3: plain hex string without 0x
-    { to: contract, calldata: toHex(calldataBytes),               priorityFee: "0", feeRate: 10 },
-    // v4: data field alias (some older builds use 'data' not 'calldata')
-    { to: contract, data:     calldataHex,                        priorityFee: "0", feeRate: 10 },
-    // v5: Array.from Uint8Array (JSON-serialisable, used by some RPC bridges)
-    { to: contract, calldata: Array.from(calldataBytes),          priorityFee: "0", feeRate: 10 },
+    { to: contract, calldata: calldataBytes,           priorityFee: "0", feeRate: 10 },
+    { to: contract, calldata: calldataHex,             priorityFee: "0", feeRate: 10 },
+    { to: contract, calldata: toHex(calldataBytes),    priorityFee: "0", feeRate: 10 },
+    { to: contract, data:     calldataHex,             priorityFee: "0", feeRate: 10 },
+    { to: contract, calldata: Array.from(calldataBytes), priorityFee: "0", feeRate: 10 },
+    // Some versions want 'address' not 'to'
+    { address: contract, calldata: calldataBytes,      priorityFee: "0", feeRate: 10 },
+    { address: contract, calldata: calldataHex,        priorityFee: "0", feeRate: 10 },
   ];
 
-  // Method priority: signInteraction is the correct OP_NET method
-  const methods = ["signInteraction", "signAndBroadcastInteraction", "sendTransaction"];
-  let lastErr = new Error("All write methods failed");
+  const tryMethods = ["signInteraction","signAndBroadcastInteraction","sendTransaction","interact","call"];
+  let lastErr  = new Error("All write methods failed — available: " + availMethods.join(', '));
+  let attempts = 0;
 
-  for (const m of methods) {
+  for (const m of tryMethods) {
     let fn;
     try { fn = opw[m]; } catch(e) { continue; }
-    if (typeof fn !== "function") { console.log("[rpcWrite] skip (not a function):", m); continue; }
+    if (typeof fn !== 'function') continue;
 
     for (const params of paramVariants) {
+      attempts++;
       try {
-        console.log("[rpcWrite] TRY", m,
-          "calldata type=" + typeof params.calldata,
-          "len=" + calldataBytes.length);
+        console.log(`[rpcWrite] attempt #${attempts}: ${m}() calldata=${typeof params.calldata}`);
         const r = await fn.call(opw, params);
-        console.log("[rpcWrite] SUCCESS!", m, r);
+        console.log('[rpcWrite] SUCCESS!', m, r);
         return r;
       } catch(e) {
         const msg = (e.message || '').toLowerCase();
-        // User cancelled — stop immediately, don't try other variants
         if (msg.includes("reject") || msg.includes("denied") || msg.includes("cancel")
             || msg.includes("user refused") || msg.includes("user declined")
             || msg.includes("dismissed")) {
-          throw e;
+          throw e; // User said no — stop immediately
         }
-        // "black window" / popup showed but empty — OPWallet internal error
-        // These are non-recoverable for this param variant, try next
-        console.warn("[rpcWrite]", m, JSON.stringify({calldataType: typeof params.calldata}), e.message);
+        console.warn(`[rpcWrite] ${m} (${typeof params.calldata}):`, e.message);
         lastErr = e;
       }
     }
   }
-  throw lastErr;
+
+  // All attempts failed — give user actionable error
+  const hint = availMethods.length === 0
+    ? '\n\nOPWallet API not found — try refreshing the page or reconnecting wallet.'
+    : '\n\nAvailable OPWallet methods: ' + availMethods.join(', ') +
+      '\n\nIf window opens blank: OPWallet WASM error — try updating OPWallet or using a different browser profile.';
+  throw new Error((lastErr.message || 'Unknown error') + hint);
 }
 
 // ─── WALLET ───────────────────────────────────────────────────────────────────
@@ -1062,25 +1103,44 @@ async function doWithdraw() {
 }
 
 async function inspectWallet() {
-  const opw = getOPWallet();
-  if (!opw) { alert('OPWallet not found'); return; }
-  const methods = [];
-  const props   = [];
-  for (const k of Object.keys(opw)) {
-    if (typeof opw[k] === 'function') methods.push(k);
-    else props.push(k + '=' + JSON.stringify(opw[k])?.slice(0,40));
-  }
-  // Also check prototype methods
-  const proto = Object.getPrototypeOf(opw);
-  if (proto) {
-    for (const k of Object.getOwnPropertyNames(proto)) {
-      if (k !== 'constructor' && typeof opw[k] === 'function' && !methods.includes(k)) {
-        methods.push(k + ' (proto)');
+  // Scan ALL window properties for wallet-like objects
+  const found = {};
+  const CHECK = ['opnet','OPNet','opwallet','OPWallet','bitcoin','btc','opnetWallet',
+                 'unisat','xverse','leather','okxwallet'];
+  for (const k of CHECK) {
+    try {
+      const v = window[k];
+      if (v && typeof v === 'object') {
+        const methods = [];
+        for (const m of Object.keys(v)) {
+          try { if (typeof v[m] === 'function') methods.push(m); } catch(e){}
+        }
+        try {
+          const proto = Object.getPrototypeOf(v);
+          if (proto) {
+            for (const m of Object.getOwnPropertyNames(proto)) {
+              if (m !== 'constructor' && !methods.includes(m)) {
+                try { if (typeof v[m] === 'function') methods.push(m+'*'); } catch(e){}
+              }
+            }
+          }
+        } catch(e){}
+        if (methods.length) found[k] = methods;
       }
-    }
+    } catch(e){}
   }
-  const msg = 'OPWallet Methods:\n' + methods.join(', ') + '\n\nProperties:\n' + props.join('\n');
-  console.log('[inspectWallet]', msg); alert(msg);
+
+  if (Object.keys(found).length === 0) {
+    alert('No wallet objects found on window.\n\nMake sure OPWallet extension is installed and enabled.');
+    return;
+  }
+
+  let msg = '=== WALLET OBJECTS FOUND ===\n\n';
+  for (const [k, methods] of Object.entries(found)) {
+    msg += `window.${k}:\n  ${methods.join(', ')}\n\n`;
+  }
+  console.log(msg);
+  alert(msg);
 }
 
 let _newRoundBusy = false;
