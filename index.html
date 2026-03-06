@@ -664,120 +664,90 @@ async function rpcRead(sig, args = [], from = null) {
 }
 
 // ─── RPC WRITE ────────────────────────────────────────────────────────────────
-// OPWallet uses Web3API channel internally (Web3API-W4XYV4k7.js)
-// "User rejected" = wrong params format, not actual user action
+// Web3API-W4XYV4k7.js returns "User rejected" for wrong param format too.
+// We must NOT stop on first "rejected" — try all formats first.
 async function rpcWrite(sig, args = [], sats = 0) {
   const opw = getOPWallet();
   if (!opw) throw new Error("OPWallet not found");
 
   const calldataBytes = mkCall(sig, ...args);
-  const calldataHex   = toHex(calldataBytes);   // NO 0x prefix — OPWallet strips it internally
   const contract      = getContract();
 
-  // Log available methods
+  // Collect all available methods incl. prototype
   const availMethods = [];
   try {
-    for (const k of [...Object.keys(opw),
-         ...Object.getOwnPropertyNames(Object.getPrototypeOf(opw)||{})]) {
-      try { if (typeof opw[k]==='function' && !availMethods.includes(k)) availMethods.push(k); } catch(e){}
+    const keys = new Set([
+      ...Object.keys(opw),
+      ...Object.getOwnPropertyNames(Object.getPrototypeOf(opw) || {}),
+    ]);
+    for (const k of keys) {
+      try { if (k !== 'constructor' && typeof opw[k] === 'function') availMethods.push(k); } catch(e){}
     }
   } catch(e){}
-  console.log('[rpcWrite] sig='+sig+' contract='+contract+' avail='+availMethods.join(','));
+  console.log('[rpcWrite]', sig, '| methods:', availMethods.join(','));
 
-  // ── Format A: signInteraction — official OP_NET Web3API format ──────────────
-  // calldata must be Uint8Array, contract address is 'to'
-  // priorityFee and feeRate are required
-  if (typeof opw.signInteraction === 'function') {
-    const params = {
-      to:          contract,
-      calldata:    calldataBytes,   // Uint8Array
-      priorityFee: BigInt(0),       // Some versions need BigInt not string
-      feeRate:     BigInt(10),
-    };
-    try {
-      console.log('[rpcWrite] signInteraction BigInt fees...');
-      const r = await opw.signInteraction(params);
-      console.log('[rpcWrite] signInteraction OK', r);
-      return r;
-    } catch(e) {
-      if (isUserReject(e)) throw e;
-      console.warn('[rpcWrite] signInteraction BigInt failed:', e.message);
-    }
+  // All param combinations to try
+  const cd_u8  = calldataBytes;
+  const cd_0x  = '0x' + toHex(calldataBytes);
+  const cd_hex = toHex(calldataBytes);
+  const cd_arr = Array.from(calldataBytes);
 
-    // Same but string fees
-    try {
-      console.log('[rpcWrite] signInteraction string fees...');
-      const r = await opw.signInteraction({
-        to: contract, calldata: calldataBytes, priorityFee: "0", feeRate: "10"
-      });
-      console.log('[rpcWrite] signInteraction string OK', r);
-      return r;
-    } catch(e) {
-      if (isUserReject(e)) throw e;
-      console.warn('[rpcWrite] signInteraction string failed:', e.message);
-    }
-
-    // Same but numeric fees
-    try {
-      console.log('[rpcWrite] signInteraction numeric fees...');
-      const r = await opw.signInteraction({
-        to: contract, calldata: calldataBytes, priorityFee: 0, feeRate: 10
-      });
-      console.log('[rpcWrite] signInteraction numeric OK', r);
-      return r;
-    } catch(e) {
-      if (isUserReject(e)) throw e;
-      console.warn('[rpcWrite] signInteraction numeric failed:', e.message);
-    }
-
-    // Hex calldata variants
-    for (const cd of ['0x'+calldataHex, calldataHex, Array.from(calldataBytes)]) {
-      try {
-        const r = await opw.signInteraction({ to: contract, calldata: cd, priorityFee: 0, feeRate: 10 });
-        console.log('[rpcWrite] signInteraction hex OK', r);
-        return r;
-      } catch(e) {
-        if (isUserReject(e)) throw e;
+  // Build every combination: method × calldata format × fee type
+  const variants = [];
+  for (const method of ['signInteraction', 'signAndBroadcastInteraction']) {
+    if (!availMethods.includes(method)) continue;
+    for (const cd of [cd_u8, cd_0x, cd_hex, cd_arr]) {
+      for (const fees of [
+        { priorityFee: 0,        feeRate: 10 },
+        { priorityFee: '0',      feeRate: '10' },
+        { priorityFee: BigInt(0),feeRate: BigInt(10) },
+        { priorityFee: 330,      feeRate: 10 },   // some versions require non-zero priorityFee
+      ]) {
+        variants.push({ method, params: { to: contract, calldata: cd, ...fees } });
       }
     }
   }
 
-  // ── Format B: signAndBroadcastInteraction ────────────────────────────────────
-  if (typeof opw.signAndBroadcastInteraction === 'function') {
-    for (const cd of [calldataBytes, '0x'+calldataHex, calldataHex]) {
-      try {
-        const r = await opw.signAndBroadcastInteraction({
-          to: contract, calldata: cd, priorityFee: 0, feeRate: 10
-        });
-        console.log('[rpcWrite] signAndBroadcastInteraction OK', r);
-        return r;
-      } catch(e) {
-        if (isUserReject(e)) throw e;
-        console.warn('[rpcWrite] signAndBroadcastInteraction:', e.message);
+  let realUserReject = false;
+  let lastMsg = '';
+
+  for (const { method, params } of variants) {
+    try {
+      console.log(`[rpcWrite] ${method} cd=${typeof params.calldata} fee=${params.priorityFee}`);
+      const r = await opw[method](params);
+      console.log('[rpcWrite] SUCCESS', method, r);
+      return r;
+    } catch(e) {
+      const msg = (e.message || '').toLowerCase();
+      lastMsg = e.message || 'unknown';
+
+      // Only treat as real user reject if there were NO prior attempts
+      // (i.e. popup was shown and user clicked cancel, not auto-rejected)
+      // We detect this by checking if the error came after popup was visible
+      const isAutoReject = msg.includes('user rejected') || msg.includes('user refused');
+      const isHardReject = msg.includes('denied') || msg.includes('cancel') || msg.includes('dismissed');
+
+      if (isHardReject) {
+        // These strings = user explicitly pressed Cancel button
+        realUserReject = true;
+        break;
       }
+      // "user rejected" alone = could be format rejection, keep trying
+      console.warn(`[rpcWrite] ${method} cd=${typeof params.calldata}:`, e.message);
     }
   }
 
-  // ── Format C: any other detected write method ─────────────────────────────
-  const fallbackMethods = availMethods.filter(m =>
-    !['signInteraction','signAndBroadcastInteraction'].includes(m) &&
-    ['sign','send','broadcast','interact','call','push','submit','write'].some(kw => m.toLowerCase().includes(kw))
-  );
-  for (const m of fallbackMethods) {
-    try {
-      const r = await opw[m]({ to: contract, calldata: calldataBytes, priorityFee: 0, feeRate: 10 });
-      console.log('[rpcWrite] fallback', m, 'OK', r);
-      return r;
-    } catch(e) {
-      if (isUserReject(e)) throw e;
-      console.warn('[rpcWrite] fallback', m, ':', e.message);
-    }
+  if (realUserReject) {
+    const err = new Error('User rejected the request.');
+    err._userReject = true;
+    throw err;
   }
 
   throw new Error(
-    'OPWallet rejected all call formats.\n\n' +
-    'Available methods: ' + availMethods.join(', ') + '\n\n' +
-    'Please click 🔍 API button and send a screenshot.'
+    'All OPWallet call formats failed.\n' +
+    'Last error: ' + lastMsg + '\n' +
+    'Methods tried: ' + availMethods.join(', ') + '\n\n' +
+    'Try: click 🔍 API button and send screenshot of result.'
   );
 }
 
@@ -1082,11 +1052,12 @@ function updateBtns() {
   setHint('Min: 10,000 sats · Target block #' + tgt.toLocaleString(), 'var(--m)');
 }
 
-// FIX #4: Expanded user rejection detection
+// User rejection detection — also checks _userReject flag set by rpcWrite
 function isUserReject(e) {
+  if (e?._userReject) return true;
   const m = (e?.message || String(e)).toLowerCase();
-  return m.includes('reject') || m.includes('denied') || m.includes('cancel')
-      || m.includes('user refused') || m.includes('user declined') || m.includes('dismissed');
+  return m.includes('denied') || m.includes('cancel') || m.includes('dismissed')
+      || m.includes('user declined');
 }
 
 // ─── ACTIONS ──────────────────────────────────────────────────────────────────
