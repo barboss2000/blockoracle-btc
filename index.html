@@ -664,87 +664,121 @@ async function rpcRead(sig, args = [], from = null) {
 }
 
 // ─── RPC WRITE ────────────────────────────────────────────────────────────────
-// OPWallet popup shows black/empty when secp256k1 WASM fails to compile.
-// Strategy: try all known write methods × all known calldata formats.
-// If all fail, surface a clear error with debug info.
+// OPWallet uses Web3API channel internally (Web3API-W4XYV4k7.js)
+// "User rejected" = wrong params format, not actual user action
 async function rpcWrite(sig, args = [], sats = 0) {
   const opw = getOPWallet();
-  if (!opw) throw new Error("OPWallet not found — install from github.com/btc-vision/opwallet/releases");
+  if (!opw) throw new Error("OPWallet not found");
 
   const calldataBytes = mkCall(sig, ...args);
-  const calldataHex   = '0x' + toHex(calldataBytes);
+  const calldataHex   = toHex(calldataBytes);   // NO 0x prefix — OPWallet strips it internally
   const contract      = getContract();
 
-  // Log available methods for debugging
+  // Log available methods
   const availMethods = [];
-  const WRITE_METHODS = [
-    "signInteraction","signAndBroadcastInteraction","sendTransaction",
-    "sendBitcoin","btc_sendTransaction","signPsbt","pushTx",
-    "interact","call","send",
-  ];
-  for (const m of WRITE_METHODS) {
-    try { if (typeof opw[m] === 'function') availMethods.push(m); } catch(e){}
-  }
-  // Also check prototype
   try {
-    const proto = Object.getPrototypeOf(opw);
-    if (proto) {
-      for (const m of Object.getOwnPropertyNames(proto)) {
-        if (m !== 'constructor' && typeof opw[m] === 'function' && !availMethods.includes(m)) {
-          availMethods.push(m + '(proto)');
-        }
-      }
+    for (const k of [...Object.keys(opw),
+         ...Object.getOwnPropertyNames(Object.getPrototypeOf(opw)||{})]) {
+      try { if (typeof opw[k]==='function' && !availMethods.includes(k)) availMethods.push(k); } catch(e){}
     }
   } catch(e){}
-  console.log('[rpcWrite] available methods:', availMethods.join(', '));
+  console.log('[rpcWrite] sig='+sig+' contract='+contract+' avail='+availMethods.join(','));
 
-  // All calldata format variants
-  const paramVariants = [
-    { to: contract, calldata: calldataBytes,           priorityFee: "0", feeRate: 10 },
-    { to: contract, calldata: calldataHex,             priorityFee: "0", feeRate: 10 },
-    { to: contract, calldata: toHex(calldataBytes),    priorityFee: "0", feeRate: 10 },
-    { to: contract, data:     calldataHex,             priorityFee: "0", feeRate: 10 },
-    { to: contract, calldata: Array.from(calldataBytes), priorityFee: "0", feeRate: 10 },
-    // Some versions want 'address' not 'to'
-    { address: contract, calldata: calldataBytes,      priorityFee: "0", feeRate: 10 },
-    { address: contract, calldata: calldataHex,        priorityFee: "0", feeRate: 10 },
-  ];
+  // ── Format A: signInteraction — official OP_NET Web3API format ──────────────
+  // calldata must be Uint8Array, contract address is 'to'
+  // priorityFee and feeRate are required
+  if (typeof opw.signInteraction === 'function') {
+    const params = {
+      to:          contract,
+      calldata:    calldataBytes,   // Uint8Array
+      priorityFee: BigInt(0),       // Some versions need BigInt not string
+      feeRate:     BigInt(10),
+    };
+    try {
+      console.log('[rpcWrite] signInteraction BigInt fees...');
+      const r = await opw.signInteraction(params);
+      console.log('[rpcWrite] signInteraction OK', r);
+      return r;
+    } catch(e) {
+      if (isUserReject(e)) throw e;
+      console.warn('[rpcWrite] signInteraction BigInt failed:', e.message);
+    }
 
-  const tryMethods = ["signInteraction","signAndBroadcastInteraction","sendTransaction","interact","call"];
-  let lastErr  = new Error("All write methods failed — available: " + availMethods.join(', '));
-  let attempts = 0;
+    // Same but string fees
+    try {
+      console.log('[rpcWrite] signInteraction string fees...');
+      const r = await opw.signInteraction({
+        to: contract, calldata: calldataBytes, priorityFee: "0", feeRate: "10"
+      });
+      console.log('[rpcWrite] signInteraction string OK', r);
+      return r;
+    } catch(e) {
+      if (isUserReject(e)) throw e;
+      console.warn('[rpcWrite] signInteraction string failed:', e.message);
+    }
 
-  for (const m of tryMethods) {
-    let fn;
-    try { fn = opw[m]; } catch(e) { continue; }
-    if (typeof fn !== 'function') continue;
+    // Same but numeric fees
+    try {
+      console.log('[rpcWrite] signInteraction numeric fees...');
+      const r = await opw.signInteraction({
+        to: contract, calldata: calldataBytes, priorityFee: 0, feeRate: 10
+      });
+      console.log('[rpcWrite] signInteraction numeric OK', r);
+      return r;
+    } catch(e) {
+      if (isUserReject(e)) throw e;
+      console.warn('[rpcWrite] signInteraction numeric failed:', e.message);
+    }
 
-    for (const params of paramVariants) {
-      attempts++;
+    // Hex calldata variants
+    for (const cd of ['0x'+calldataHex, calldataHex, Array.from(calldataBytes)]) {
       try {
-        console.log(`[rpcWrite] attempt #${attempts}: ${m}() calldata=${typeof params.calldata}`);
-        const r = await fn.call(opw, params);
-        console.log('[rpcWrite] SUCCESS!', m, r);
+        const r = await opw.signInteraction({ to: contract, calldata: cd, priorityFee: 0, feeRate: 10 });
+        console.log('[rpcWrite] signInteraction hex OK', r);
         return r;
       } catch(e) {
-        const msg = (e.message || '').toLowerCase();
-        if (msg.includes("reject") || msg.includes("denied") || msg.includes("cancel")
-            || msg.includes("user refused") || msg.includes("user declined")
-            || msg.includes("dismissed")) {
-          throw e; // User said no — stop immediately
-        }
-        console.warn(`[rpcWrite] ${m} (${typeof params.calldata}):`, e.message);
-        lastErr = e;
+        if (isUserReject(e)) throw e;
       }
     }
   }
 
-  // All attempts failed — give user actionable error
-  const hint = availMethods.length === 0
-    ? '\n\nOPWallet API not found — try refreshing the page or reconnecting wallet.'
-    : '\n\nAvailable OPWallet methods: ' + availMethods.join(', ') +
-      '\n\nIf window opens blank: OPWallet WASM error — try updating OPWallet or using a different browser profile.';
-  throw new Error((lastErr.message || 'Unknown error') + hint);
+  // ── Format B: signAndBroadcastInteraction ────────────────────────────────────
+  if (typeof opw.signAndBroadcastInteraction === 'function') {
+    for (const cd of [calldataBytes, '0x'+calldataHex, calldataHex]) {
+      try {
+        const r = await opw.signAndBroadcastInteraction({
+          to: contract, calldata: cd, priorityFee: 0, feeRate: 10
+        });
+        console.log('[rpcWrite] signAndBroadcastInteraction OK', r);
+        return r;
+      } catch(e) {
+        if (isUserReject(e)) throw e;
+        console.warn('[rpcWrite] signAndBroadcastInteraction:', e.message);
+      }
+    }
+  }
+
+  // ── Format C: any other detected write method ─────────────────────────────
+  const fallbackMethods = availMethods.filter(m =>
+    !['signInteraction','signAndBroadcastInteraction'].includes(m) &&
+    ['sign','send','broadcast','interact','call','push','submit','write'].some(kw => m.toLowerCase().includes(kw))
+  );
+  for (const m of fallbackMethods) {
+    try {
+      const r = await opw[m]({ to: contract, calldata: calldataBytes, priorityFee: 0, feeRate: 10 });
+      console.log('[rpcWrite] fallback', m, 'OK', r);
+      return r;
+    } catch(e) {
+      if (isUserReject(e)) throw e;
+      console.warn('[rpcWrite] fallback', m, ':', e.message);
+    }
+  }
+
+  throw new Error(
+    'OPWallet rejected all call formats.\n\n' +
+    'Available methods: ' + availMethods.join(', ') + '\n\n' +
+    'Please click 🔍 API button and send a screenshot.'
+  );
 }
 
 // ─── WALLET ───────────────────────────────────────────────────────────────────
