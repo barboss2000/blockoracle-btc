@@ -4,6 +4,8 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>BlockBet — Bitcoin L1 · OP_NET Testnet</title>
+<!-- FIX #5: Added favicon to prevent 404 -->
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>₿</text></svg>"/>
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800;900&display=swap" rel="stylesheet"/>
 <script src="https://s3.tradingview.com/tv.js"></script>
 <style>
@@ -432,32 +434,49 @@ body{background:var(--bg);color:var(--text);font-family:'DM Mono',monospace;font
 </div><!-- app -->
 
 <script>
+// ─── FIX #1 & #2: Safe EVM/StacksProvider isolation ──────────────────────────
+// Wraps in try/catch to prevent "Cannot redefine property" TypeError
+// from conflicting browser extensions (MetaMask, Stacks, etc.)
+(function isolateEVM() {
+  // FIX: use try/catch instead of just checking window.ethereum
+  // This prevents TypeError when MetaMask defines ethereum as non-configurable
+  try {
+    if (window.ethereum) {
+      console.log('[BlockBet] EVM wallet detected — ignored, using OPWallet only');
+    }
+  } catch(e) {
+    // Silently ignore — MetaMask or another extension owns window.ethereum
+    console.log('[BlockBet] EVM property access blocked (extension conflict) — OK, ignored');
+  }
+
+  // FIX #2: Don't touch StacksProvider at all — just log safely
+  try {
+    if (window.StacksProvider) {
+      console.log('[BlockBet] StacksProvider detected — ignored');
+    }
+  } catch(e) {
+    console.log('[BlockBet] StacksProvider access blocked — OK, ignored');
+  }
+})();
+
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const CONTRACT = 'opt1sqqpzxuet8963842vd56rmt3jaa4cr3fj5vr0hryp';
-// Runtime override: if user changes contract via Settings, this returns new value
 function getContract() { return window._contractOverride || CONTRACT; }
-// bcrt1 equivalent (same witness program, different HRP)
 const CONTRACT_BCRT = 'tb1sqqat6q5668ckvr5ger3xyrlp5mtayfegag5m0c39';
-// RPC endpoints — first working one is used automatically
-// Edit RPC directly in the UI (gear icon) or change here
 const RPC_URLS = [
   'https://testnet.opnet.org/api/v1/json-rpc',
   'https://testnet.opnet.org/json-rpc',
 ];
 const MIN_SATS = 10000;
 
-// ─── METAMASK ISOLATION ───────────────────────────────────────────────────────
-// We ONLY use window.opnet — MetaMask/EVM wallets are completely ignored
-(function isolateEVM() {
-  if (window.ethereum) {
-    console.log('[BlockBet] EVM wallet detected — ignored, using OPWallet only');
-  }
-})();
-
-// Get OPWallet safely (never touches ethereum)
+// FIX #3: Safe OPWallet getter — never touches window.ethereum
 function getOPWallet() {
-  if (window.opnet) return window.opnet;
-  if (window.unisat && window.unisat.opnet) return window.unisat.opnet;
+  try {
+    if (window.opnet) return window.opnet;
+  } catch(e) { /* extension conflict */ }
+  try {
+    if (window.unisat && window.unisat.opnet) return window.unisat.opnet;
+  } catch(e) { /* extension conflict */ }
   return null;
 }
 
@@ -497,12 +516,15 @@ function fnvSel(sig) {
   for (let i = 0; i < sig.length; i++) { h ^= sig.charCodeAt(i); h = (Math.imul(h, 0x01000193) >>> 0); }
   const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, h, true); return b;
 }
-const mkCall = (sig, ...args) => cat(fnvSel(sig), ...args); // returns Uint8Array
-const mkCallHex = (sig, ...args) => toHex(mkCall(sig, ...args)); // hex for RPC reads
-const s2btc  = s => (Number(s) / 1e8).toFixed(8).replace(/\.?0+$/, '') || '0';
+const mkCall    = (sig, ...args) => cat(fnvSel(sig), ...args);
+const mkCallHex = (sig, ...args) => toHex(mkCall(sig, ...args));
+const s2btc     = s => (Number(s) / 1e8).toFixed(8).replace(/\.?0+$/, '') || '0';
+
+// FIX #3: sha256 without secp256k1/WASM — uses only Web Crypto API (built-in, no deps)
 async function sha256hex(hex) {
-  const h = await crypto.subtle.digest('SHA-256', fromHex(hex).buffer);
-  return new Uint8Array(h);
+  const bytes = fromHex(hex);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', bytes.buffer);
+  return new Uint8Array(hashBuffer);
 }
 
 // ─── DECODER ──────────────────────────────────────────────────────────────────
@@ -529,16 +551,14 @@ const decPending = h => new D(h).u256();
 
 // ─── RPC READ ─────────────────────────────────────────────────────────────────
 async function rpcRead(sig, args = [], from = null) {
-  const cd  = mkCallHex(sig, ...args);
+  const cd   = mkCallHex(sig, ...args);
   const addr = window._contractOverride || getContract();
 
-  // ── Method 1: Use OPWallet provider (avoids CORS) ──────────────────────────
-  if (window.opnet?.provider?.call) {
+  // Method 1: OPWallet provider (avoids CORS)
+  const opw = getOPWallet();
+  if (opw?.provider?.call) {
     try {
-      const result = await window.opnet.provider.call({
-        to: addr,
-        data: cd,
-      });
+      const result = await opw.provider.call({ to: addr, data: cd });
       const d = (result || '').replace(/^0x/, '');
       console.log('[RPC opnet.provider] len=', d.length);
       workingRpc = '__opnet_provider__';
@@ -548,10 +568,10 @@ async function rpcRead(sig, args = [], from = null) {
     }
   }
 
-  // ── Method 2: OPWallet callReadOnly / readContract ──────────────────────────
-  if (window.opnet?.callReadOnly || window.opnet?.readContract) {
+  // Method 2: callReadOnly / readContract
+  if (opw?.callReadOnly || opw?.readContract) {
     try {
-      const fn = window.opnet.callReadOnly || window.opnet.readContract;
+      const fn = opw.callReadOnly || opw.readContract;
       const result = await fn({ to: addr, data: cd });
       const d = (result?.result || result?.data || result || '').toString().replace(/^0x/, '');
       console.log('[RPC callReadOnly] len=', d.length);
@@ -562,27 +582,18 @@ async function rpcRead(sig, args = [], from = null) {
     }
   }
 
-  // ── Method 3: Direct fetch with CORS proxy fallback ─────────────────────────
-  const baseAddr = addr;
-  const addrs = [baseAddr, CONTRACT_BCRT];
+  // Method 3: Direct fetch + CORS proxy fallback
   const frm = from || wallet?.address || null;
   const paramSets = [];
-  for (const a of addrs) {
+  for (const a of [addr, CONTRACT_BCRT]) {
     if (frm) paramSets.push([a, cd, frm]);
     paramSets.push([a, cd]);
   }
-
-  // Try CORS proxy if direct fetch fails
   const PROXY = 'https://corsproxy.io/?';
-  const directUrls = workingRpc && workingRpc !== '__opnet_provider__' && workingRpc !== '__opnet_callReadOnly__'
+  const directUrls = (workingRpc && !workingRpc.startsWith('__'))
     ? [workingRpc, ...RPC_URLS.filter(u => u !== workingRpc)]
     : RPC_URLS;
-
-  // Add CORS-proxied versions as fallback
-  const allUrls = [
-    ...directUrls,
-    ...directUrls.map(u => PROXY + encodeURIComponent(u)),
-  ];
+  const allUrls = [...directUrls, ...directUrls.map(u => PROXY + encodeURIComponent(u))];
 
   let lastErr = new Error('All RPC endpoints failed');
   for (const url of allUrls) {
@@ -599,8 +610,7 @@ async function rpcRead(sig, args = [], from = null) {
         if (j.error) {
           const msg = typeof j.error === 'object' ? j.error.message : String(j.error);
           console.warn('[RPC ERR]', sig, url, msg);
-          lastErr = new Error(msg);
-          continue;
+          lastErr = new Error(msg); continue;
         }
         let d = '';
         if (typeof j.result === 'string') d = j.result;
@@ -620,35 +630,29 @@ async function rpcRead(sig, args = [], from = null) {
   throw lastErr;
 }
 
-// RPC WRITE
+// ─── RPC WRITE ────────────────────────────────────────────────────────────────
 async function rpcWrite(sig, args = [], sats = 0) {
   const opw = getOPWallet();
   if (!opw) throw new Error("OPWallet not found");
   const calldataBytes = mkCall(sig, ...args);
   const contract = getContract();
 
-  // Точный формат из перехвата реального вызова signInteraction в OP-Sign:
-  // { contract, calldata (Uint8Array), priorityFee: "0", gasSatFee: "880", feeRate: 10, to, from, utxos, network, optionalInputs, optionalOutputs }
-  // НО: мы передаём только то что нужно — остальное (utxos, network, from) wallet добавляет сам через queryContractInformation
-  // Ключевые поля: to = адрес контракта, calldata = Uint8Array, priorityFee = "0", feeRate = 10
-
   const params = {
     to: contract,
-    calldata: calldataBytes,  // Uint8Array — wallet сам конвертирует через функцию t()
+    calldata: calldataBytes,
     priorityFee: "0",
     feeRate: 10,
   };
 
-  // Попробуем сначала signInteraction (именно его использует OP-Sign)
-  // затем signAndBroadcastInteraction как запасной
   const methods = ["signInteraction", "signAndBroadcastInteraction"];
   let lastErr = new Error("All methods failed");
 
   for (const m of methods) {
-    let fn; try { fn = opw[m]; } catch(e) { continue; }
+    let fn;
+    try { fn = opw[m]; } catch(e) { continue; }
     if (typeof fn !== "function") { console.log("[rpcWrite] skip", m); continue; }
     try {
-      console.log("[rpcWrite] TRY", m, "calldata=Uint8Array len="+calldataBytes.length);
+      console.log("[rpcWrite] TRY", m, "calldata len=" + calldataBytes.length);
       const r = await fn.call(opw, params);
       console.log("[rpcWrite] SUCCESS!", m, r);
       return r;
@@ -656,20 +660,20 @@ async function rpcWrite(sig, args = [], sats = 0) {
       const msg = (e.message || "").toLowerCase();
       console.warn("[rpcWrite]", m, ":", e.message);
       lastErr = e;
-      if (msg.includes("reject") || msg.includes("denied") || msg.includes("cancel")) throw e;
+      // FIX #4: Immediately propagate user rejection — don't try other methods
+      if (msg.includes("reject") || msg.includes("denied") || msg.includes("cancel") || msg.includes("user refused")) {
+        throw e;
+      }
     }
   }
   throw lastErr;
 }
 
-
-
-
 // ─── WALLET ───────────────────────────────────────────────────────────────────
 async function connectWallet() {
   const opw = getOPWallet();
   if (!opw) {
-    alert('OPWallet not found!\n\nInstall: github.com/btc-vision/opwallet/releases\n\nThen:\n1. OPWallet Settings Network Testnet\n2. Get tBTC: faucet.opnet.org');
+    alert('OPWallet not found!\n\nInstall: github.com/btc-vision/opwallet/releases\n\nThen:\n1. OPWallet → Settings → Network → Testnet\n2. Get tBTC: faucet.opnet.org');
     return;
   }
   const btn = document.getElementById('btnConn');
@@ -682,13 +686,10 @@ async function connectWallet() {
     if (!addrs?.length) throw new Error('No accounts');
     const addr = addrs[0];
 
-    // ── Network check: must be Testnet (opt1... addresses)
-    // Regtest addresses start with bcrt1 or opr1, Testnet with tb1 or opt1
     const isTestnet = addr.startsWith('tb1') || addr.startsWith('opt1');
     const isRegtest = addr.startsWith('bcrt1') || addr.startsWith('opr1') || addr.startsWith('bcrt');
     console.log('[connectWallet] addr=', addr, 'isTestnet=', isTestnet, 'isRegtest=', isRegtest);
 
-    // Also try getNetwork() if available
     let networkName = '';
     try {
       const net = await opw.getNetwork();
@@ -699,7 +700,7 @@ async function connectWallet() {
     const onWrongNetwork = isRegtest || networkName.includes('regtest') || networkName.includes('mainnet');
     if (onWrongNetwork) {
       btn.innerText = 'Connect OPWallet'; btn.disabled = false; btn.onclick = connectWallet;
-      alert('Wrong network! OPWallet is on ' + (networkName || (isRegtest ? 'Regtest' : 'unknown')) + '.\n\nPlease switch to TESTNET:\nOPWallet Settings Network Testnet\n\nContract: opt1sqqat6q5668ckvr5ger3xyrlp5mtayfeg3vxj30p9');
+      alert('Wrong network! OPWallet is on ' + (networkName || (isRegtest ? 'Regtest' : 'unknown')) + '.\n\nPlease switch to TESTNET:\nOPWallet → Settings → Network → Testnet');
       return;
     }
 
@@ -712,11 +713,11 @@ async function connectWallet() {
     document.getElementById('btnDisc').style.display = 'flex';
     updateBtns(); fetchBalance();
     await refreshMyBet(); runAI();
-    opw.on && opw.on('disconnect', disconnectWallet);
+    try { opw.on && opw.on('disconnect', disconnectWallet); } catch(e) {}
   } catch(e) {
     console.error('connectWallet:', e);
     btn.innerText = 'Connect OPWallet'; btn.disabled = false; btn.onclick = connectWallet;
-    alert('Connection failed: ' + e.message);
+    if (!isUserReject(e)) alert('Connection failed: ' + e.message);
   }
 }
 
@@ -969,13 +970,14 @@ function updateBtns() {
   setHint('Min: 10,000 sats · Target block #' + tgt.toLocaleString(), 'var(--m)');
 }
 
-// Helper: is this a user-rejected error?
+// FIX #4: Expanded user rejection detection
 function isUserReject(e) {
   const m = (e?.message || String(e)).toLowerCase();
-  return m.includes('reject') || m.includes('denied') || m.includes('cancel');
+  return m.includes('reject') || m.includes('denied') || m.includes('cancel')
+      || m.includes('user refused') || m.includes('user declined') || m.includes('dismissed');
 }
 
-// ACTIONS
+// ─── ACTIONS ──────────────────────────────────────────────────────────────────
 async function placeBet(isEven) {
   if (!wallet) { alert('Connect OPWallet first'); return; }
   if (isBusy) return;
@@ -1062,8 +1064,12 @@ async function doNewRound() {
     b.innerText = 'Start First Round (Initialize Contract)';
     b.style.background = 'var(--btc)'; b.style.color = '#000';
     _newRoundBusy = false;
-    if (!isUserReject(e)) alert('Failed:\n' + (e.message || String(e)));
-    else setHint('Cancelled - press button again to retry', 'var(--m)');
+    // FIX #4: Show friendly message for cancellation, not just silent fail
+    if (isUserReject(e)) {
+      setHint('Cancelled — press button again to retry', 'var(--m)');
+    } else {
+      alert('Failed:\n' + (e.message || String(e)));
+    }
   }
 }
 
@@ -1098,7 +1104,7 @@ new TradingView.widget({
   loading_screen: { backgroundColor: "#080d08", foregroundColor: "#f7931a" },
 });
 
-// ─── SETTINGS ────────────────────────────────────────────────────────────────
+// ─── SETTINGS ─────────────────────────────────────────────────────────────────
 function showSettings() {
   const m = document.getElementById('settingsModal');
   document.getElementById('inputContract').value = window._contractOverride || getContract();
@@ -1113,18 +1119,13 @@ function applySettings() {
   const newRpc      = document.getElementById('inputRpc').value.trim();
   if (newContract && newContract.startsWith('opr1')) {
     window._contractOverride = newContract;
-    // Patch getContract() variable at runtime
     window.__CONTRACT = newContract;
   }
-  if (newRpc) {
-    workingRpc = newRpc;
-    RPC_URLS.unshift(newRpc);
-  }
+  if (newRpc) { workingRpc = newRpc; RPC_URLS.unshift(newRpc); }
   hideSettings();
   round = null; myBet = null;
   refreshRound();
 }
-// Allow clicking outside modal to close
 document.getElementById('settingsModal').addEventListener('click', function(e) {
   if (e.target === this) hideSettings();
 });
@@ -1134,7 +1135,7 @@ startPriceWS(); setSync(); refreshRound();
 setInterval(refreshRound, 15000);
 setInterval(() => { if (wallet) fetchBalance(); }, 60000);
 
-// Session restore — retry until OPWallet injects window.opnet
+// Session restore — retries until OPWallet injects window.opnet
 function tryRestoreSession(attempts) {
   attempts = attempts || 0;
   const opw = getOPWallet();
@@ -1157,12 +1158,11 @@ function tryRestoreSession(attempts) {
       document.getElementById('btnDisc').style.display = 'flex';
       updateBtns(); fetchBalance();
       await refreshMyBet(); runAI();
-      opw.on && opw.on('disconnect', disconnectWallet);
+      try { opw.on && opw.on('disconnect', disconnectWallet); } catch(e) {}
     } catch(e) { console.warn('restore:', e.message); }
   }).catch(function() {});
 }
 window.addEventListener('load', function() { tryRestoreSession(0); });
-
 
 // ─── Graffiti background ──────────────────────────────────────────────────────
 (function() {
@@ -1182,7 +1182,6 @@ window.addEventListener('load', function() { tryRestoreSession(0); });
   function randInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
   function rand(min, max) { return Math.random() * (max - min) + min; }
 
-  // Seeded random so it's consistent per session
   let seed = 42;
   function srnd() {
     seed = (seed * 16807 + 0) % 2147483647;
@@ -1212,35 +1211,23 @@ window.addEventListener('load', function() { tryRestoreSession(0); });
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(angle);
-
-    // Outline / drip effect
     ctx.font = `900 ${size}px 'Syne', sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-
-    // Spray halo
     drawSprayPaint(ctx, 0, 0, size * 0.7, color, 80);
-
-    // Shadow layers for depth
     ctx.shadowColor = color;
     ctx.shadowBlur = size * 0.3;
     ctx.globalAlpha = 0.06;
     ctx.fillStyle = color;
     ctx.fillText(letter, 3, 6);
-
-    // Outline stroke
     ctx.globalAlpha = 0.18;
     ctx.strokeStyle = color;
     ctx.lineWidth = size * 0.08;
     ctx.lineJoin = 'round';
     ctx.strokeText(letter, 0, 0);
-
-    // Fill
     ctx.globalAlpha = 0.09;
     ctx.fillStyle = color;
     ctx.fillText(letter, 0, 0);
-
-    // Drip
     const dripCount = srandInt(1, 3);
     for (let d = 0; d < dripCount; d++) {
       const dx = srand(-size * 0.3, size * 0.3);
@@ -1258,14 +1245,12 @@ window.addEventListener('load', function() { tryRestoreSession(0); });
         dx + srand(-4, 4), size * 0.4 + dripLen
       );
       ctx.stroke();
-      // Drip end blob
       ctx.globalAlpha = 0.1;
       ctx.beginPath();
       ctx.arc(dx + srand(-4,4), size * 0.4 + dripLen, dripW * 1.5, 0, Math.PI * 2);
       ctx.fillStyle = color;
       ctx.fill();
     }
-
     ctx.restore();
   }
 
@@ -1273,7 +1258,6 @@ window.addEventListener('load', function() { tryRestoreSession(0); });
     ctx.save();
     ctx.translate(x, y);
     ctx.transform(1, 0, skew, 1, 0, 0);
-
     const letters = text.split('');
     let ox = 0;
     for (const l of letters) {
@@ -1312,7 +1296,6 @@ window.addEventListener('load', function() { tryRestoreSession(0); });
     ctx.shadowColor = color;
     ctx.shadowBlur = 10;
     ctx.beginPath();
-    // Arrow up
     ctx.moveTo(0, size * 0.5);
     ctx.lineTo(0, -size * 0.5);
     ctx.moveTo(-size * 0.3, -size * 0.2);
@@ -1346,11 +1329,9 @@ window.addEventListener('load', function() { tryRestoreSession(0); });
   function draw() {
     const W = canvas.width;
     const H = canvas.height;
-    seed = 42; // reset seed for consistent render
-
+    seed = 42;
     ctx.clearRect(0, 0, W, H);
 
-    // ── Base: deep dark gradient (not pure black) ──
     const bgGrad = ctx.createLinearGradient(0, 0, W, H);
     bgGrad.addColorStop(0,   '#0d1a0a');
     bgGrad.addColorStop(0.3, '#0a0f1a');
@@ -1359,7 +1340,6 @@ window.addEventListener('load', function() { tryRestoreSession(0); });
     ctx.fillStyle = bgGrad;
     ctx.fillRect(0, 0, W, H);
 
-    // ── Ink splat blobs — big color explosions ──
     const blobs = [
       { x: W*0.08,  y: H*0.15, r: W*0.22, c: 'rgba(247,147,26,',  a: 0.13 },
       { x: W*0.85,  y: H*0.75, r: W*0.28, c: 'rgba(247,147,26,',  a: 0.10 },
@@ -1372,20 +1352,16 @@ window.addEventListener('load', function() { tryRestoreSession(0); });
     ];
 
     for (const b of blobs) {
-      // Radial splat
       const g = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r);
-      g.addColorStop(0,   b.c + (b.a * 2.5) + ')');
-      g.addColorStop(0.4, b.c + b.a + ')');
+      g.addColorStop(0,    b.c + (b.a * 2.5) + ')');
+      g.addColorStop(0.4,  b.c + b.a + ')');
       g.addColorStop(0.75, b.c + (b.a * 0.3) + ')');
-      g.addColorStop(1,   b.c + '0)');
+      g.addColorStop(1,    b.c + '0)');
       ctx.globalAlpha = 1;
       ctx.fillStyle = g;
       ctx.beginPath();
       ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
       ctx.fill();
-
-      // Splatter droplets around blob
-      const color = b.c + (b.a * 3) + ')';
       for (let s = 0; s < 18; s++) {
         const angle = srnd() * Math.PI * 2;
         const dist  = srand(b.r * 0.5, b.r * 1.6);
@@ -1395,7 +1371,6 @@ window.addEventListener('load', function() { tryRestoreSession(0); });
         ctx.globalAlpha = srand(0.05, 0.18);
         ctx.fillStyle = b.c + (b.a * 4) + ')';
         ctx.beginPath();
-        // Elongated splat drop
         ctx.save();
         ctx.translate(sx, sy);
         ctx.rotate(angle + Math.PI/2);
@@ -1405,7 +1380,6 @@ window.addEventListener('load', function() { tryRestoreSession(0); });
       }
     }
 
-    // ── Spray strokes — wide brush marks ──
     const strokes = [
       { x1: W*0.0,  y1: H*0.3,  x2: W*0.4,  y2: H*0.15, c: NEON,            w: 80 },
       { x1: W*0.6,  y1: H*0.85, x2: W*1.0,  y2: H*0.65, c: NEON2,           w: 60 },
@@ -1435,7 +1409,6 @@ window.addEventListener('load', function() { tryRestoreSession(0); });
       ctx.shadowBlur = 0;
     }
 
-    // ── Concrete texture: noise ──
     for (let i = 0; i < 4000; i++) {
       ctx.globalAlpha = srand(0.01, 0.05);
       ctx.fillStyle = srnd() > 0.6 ? '#ffffff' : (srnd() > 0.5 ? NEON : '#333');
@@ -1443,48 +1416,34 @@ window.addEventListener('load', function() { tryRestoreSession(0); });
       ctx.fillRect(px, py, srand(0.5, 2), srand(0.5, 2));
     }
 
-    // Big background tags - words scattered
-    const words = ['BLOCKBET', 'UP', 'DOWN', 'BTC', 'BITCOIN', 'WIN', 'CHAIN', '0x'];
-    const colors = [NEON, NEON2, 'rgba(255,255,255,0.6)', NEON];
-
-    // Large background word
     drawTag(ctx, W * 0.02, H * 0.18, 'BLOCKBET', Math.min(W * 0.075, 90), NEON, -0.05);
     drawTag(ctx, W * 0.55, H * 0.72, 'OPNET', Math.min(W * 0.065, 80), NEON2, 0.04);
     drawTag(ctx, W * 0.05, H * 0.82, 'BTC', Math.min(W * 0.1, 120), NEON, -0.08);
-    drawTag(ctx, W * 0.6, H * 0.12, 'BITCOIN', Math.min(W * 0.055, 70), 'rgba(255,255,255,0.5)', 0.06);
-    drawTag(ctx, W * 0.3, H * 0.45, 'WIN', Math.min(W * 0.12, 140), NEON2, -0.03);
-    drawTag(ctx, W * 0.7, H * 0.38, '0xCHAIN', Math.min(W * 0.045, 55), NEON, 0.03);
-    drawTag(ctx, W * 0.15, H * 0.6, 'UP', Math.min(W * 0.09, 110), NEON, 0.05);
-    drawTag(ctx, W * 0.75, H * 0.6, 'DOWN', Math.min(W * 0.07, 85), '#f87171', -0.04);
+    drawTag(ctx, W * 0.6,  H * 0.12, 'BITCOIN', Math.min(W * 0.055, 70), 'rgba(255,255,255,0.5)', 0.06);
+    drawTag(ctx, W * 0.3,  H * 0.45, 'WIN', Math.min(W * 0.12, 140), NEON2, -0.03);
+    drawTag(ctx, W * 0.7,  H * 0.38, '0xCHAIN', Math.min(W * 0.045, 55), NEON, 0.03);
+    drawTag(ctx, W * 0.15, H * 0.6,  'UP', Math.min(W * 0.09, 110), NEON, 0.05);
+    drawTag(ctx, W * 0.75, H * 0.6,  'DOWN', Math.min(W * 0.07, 85), '#f87171', -0.04);
 
-    // Hexagons (blockchain motif)
     for (let i = 0; i < 18; i++) {
       drawHexagon(ctx, srnd() * W, srnd() * H, srand(20, 90), i % 3 === 0 ? NEON : NEON2);
     }
-
-    // Arrows (UP / DOWN arrows)
     for (let i = 0; i < 12; i++) {
       drawArrow(ctx, srnd() * W, srnd() * H, srand(30, 80), srnd() > 0.5 ? NEON : '#f87171');
     }
-
-    // Scratchy tag lines
     for (let i = 0; i < 25; i++) {
       const x1 = srnd() * W, y1 = srnd() * H;
       const x2 = x1 + srand(-200, 200), y2 = y1 + srand(-80, 80);
       drawLine(ctx, x1, y1, x2, y2, srnd() > 0.7 ? NEON : 'rgba(255,255,255,0.3)', srand(0.5, 3), srand(0.02, 0.07));
     }
-
-    // Spray circles (random spots)
     for (let i = 0; i < 20; i++) {
       drawSprayPaint(ctx, srnd() * W, srnd() * H, srand(30, 120), srnd() > 0.5 ? NEON : NEON2, 40);
     }
 
-    // Semi-transparent dark overlay so UI stays readable
     ctx.globalAlpha = 0.55;
     ctx.fillStyle = '#080808';
     ctx.fillRect(0, 0, W, H);
 
-    // Vignette edges
     const vignette = ctx.createRadialGradient(W/2, H/2, H*0.2, W/2, H/2, H);
     vignette.addColorStop(0,   'rgba(0,0,0,0)');
     vignette.addColorStop(0.7, 'rgba(0,0,0,0.2)');
@@ -1495,7 +1454,6 @@ window.addEventListener('load', function() { tryRestoreSession(0); });
   }
 
   window.addEventListener('resize', resize);
-  // Wait for Syne font to load for text rendering
   document.fonts.ready.then(resize);
   resize();
 })();
