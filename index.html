@@ -1,1577 +1,413 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<title>BlockBet — Bitcoin L1 · OP_NET Testnet</title>
-<!-- FIX #5: Added favicon to prevent 404 -->
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>₿</text></svg>"/>
-<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800;900&display=swap" rel="stylesheet"/>
-<script src="https://s3.tradingview.com/tv.js"></script>
-<style>
-:root{
-  --btc:#f7931a;--btc-dim:rgba(247,147,26,.12);--btc-glow:rgba(247,147,26,.06);
-  --neon:#d5fd51;--neon-dim:rgba(213,253,81,.12);
-  --bg:#080d08;--s1:#111;--s2:#161616;--s3:#1c1c1c;
-  --b1:#2a2a2a;--b2:#333;--text:#fff;--m:#666;--dim:#3a3a3a;
-  --even:#4ade80;--odd:#f87171;
-  --ed:rgba(74,222,128,.10);--od:rgba(248,113,113,.10);
-  --ai:#a78bfa;--ai-dim:rgba(167,139,250,.10);
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+interface IERC20 {
+    function transferFrom(address from, address to, uint value) external returns (bool);
+    function transfer(address to, uint value) external returns (bool);
 }
-*{margin:0;padding:0;box-sizing:border-box;}
-html,body{height:100%;overflow:hidden;}
-body{background:var(--bg);color:var(--text);font-family:'DM Mono',monospace;font-size:12px;}
-#graffiti-bg{position:fixed;inset:0;pointer-events:none;z-index:0;}
-.app{position:relative;z-index:1;display:flex;flex-direction:column;height:100vh;}
 
-/* ── HEADER ── */
-.hdr{display:flex;align-items:center;justify-content:space-between;
-  padding:8px 18px;border-bottom:1px solid var(--b1);
-  background:rgba(5,5,5,.98);backdrop-filter:blur(20px);flex-shrink:0;z-index:200;}
-.logo{display:flex;align-items:center;gap:9px;}
-.logo-hex{width:28px;height:28px;background:var(--btc);
-  clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);
-  display:flex;align-items:center;justify-content:center;
-  font-size:13px;font-weight:900;color:#000;animation:hglow 3s ease-in-out infinite;}
-@keyframes hglow{0%,100%{filter:brightness(1);}50%{filter:brightness(1.6) drop-shadow(0 0 10px #f7931a);}}
-.logo-txt{font-family:'Syne',sans-serif;font-weight:900;font-size:15px;letter-spacing:-.5px;}
-.logo-txt span{color:var(--btc);}
-.logo-sub{font-size:8px;color:var(--m);letter-spacing:2px;text-transform:uppercase;margin-top:-1px;}
+/**
+ * @title PredictionMarketV5 + XP System
+ *
+ * ORIGINAL V5 contract — all data preserved unchanged:
+ *   rounds, pools, upBets, downBets, currentRound, roundDuration, platformFee
+ *
+ * ADDED — XP system:
+ *   - 1,000,000 XP distributed over 17 weeks (~4 months)
+ *   - ~58,823 XP every Sunday 24:00 UTC (Monday transition)
+ *   - Proportional to each player weekly bet volume
+ *   - getPlayersWithXp(offset, limit) — list of all wallets + XP for developer
+ */
+contract PredictionMarketV5_XP {
 
-.hdr-right{display:flex;align-items:center;gap:7px;}
-.badge{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--btc);
-  border:1px solid rgba(247,147,26,.3);padding:4px 9px;border-radius:4px;
-  background:var(--btc-dim);letter-spacing:1px;text-transform:uppercase;}
-.bdot{width:6px;height:6px;border-radius:50%;background:var(--btc);animation:blink 2s infinite;}
-@keyframes blink{0%,100%{opacity:1;}50%{opacity:.15;}}
+    // ═══════════════════════════════════════════════════════════════
+    // ORIGINAL STRUCTS (V5 — unchanged)
+    // ═══════════════════════════════════════════════════════════════
 
-.btn-faucet{background:transparent;color:var(--neon);border:1px solid rgba(213,253,81,.3);
-  padding:6px 11px;border-radius:5px;font-family:'DM Mono',monospace;font-size:10px;
-  cursor:pointer;text-decoration:none;transition:all .2s;display:inline-flex;align-items:center;gap:4px;}
-.btn-faucet:hover{background:var(--neon-dim);}
-
-.btn-conn{padding:6px 14px;border-radius:5px;font-family:'DM Mono',monospace;font-size:10px;
-  font-weight:500;cursor:pointer;transition:all .2s;border:none;white-space:nowrap;}
-.btn-conn.off{background:var(--btc);color:#000;}
-.btn-conn.off:hover{background:#e8841a;}
-.btn-conn.on{background:var(--s2);color:var(--btc);
-  border:1px solid rgba(247,147,26,.4);display:flex;align-items:center;gap:6px;}
-.wdot{width:7px;height:7px;border-radius:50%;background:var(--even);
-  box-shadow:0 0 6px var(--even);animation:wpulse 2s infinite;flex-shrink:0;}
-@keyframes wpulse{0%,100%{opacity:1;}50%{opacity:.4;}}
-.btn-disc{background:transparent;color:var(--m);border:1px solid var(--b1);
-  padding:6px 10px;border-radius:5px;font-family:'DM Mono',monospace;font-size:10px;
-  cursor:pointer;transition:all .2s;display:none;white-space:nowrap;}
-.btn-disc:hover{border-color:var(--odd);color:var(--odd);}
-
-/* ── STATUS BAR ── */
-.sbar{padding:5px 18px;font-size:10px;display:flex;align-items:center;justify-content:center;
-  gap:12px;flex-shrink:0;border-bottom:1px solid;}
-.sbar.ok{background:rgba(74,222,128,.05);border-color:rgba(74,222,128,.12);color:var(--even);}
-.sbar.warn{background:rgba(247,147,26,.06);border-color:rgba(247,147,26,.18);color:var(--btc);}
-.sbar.err{background:rgba(248,113,113,.05);border-color:rgba(248,113,113,.15);color:var(--odd);}
-.sbar code{font-size:9px;opacity:.7;}
-
-/* ── LAYOUT ── */
-.body{display:grid;grid-template-columns:1fr 420px;flex:1;overflow:hidden;min-height:0;}
-
-/* Chart */
-.chart-col{display:flex;flex-direction:column;border-right:1px solid var(--b1);overflow:hidden;}
-.chart-hdr{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;
-  background:rgba(5,5,5,.92);border-bottom:1px solid rgba(247,147,26,.1);flex-shrink:0;}
-.chart-sym{font-family:'Syne',sans-serif;font-size:15px;font-weight:800;
-  display:flex;align-items:center;gap:7px;}
-.chart-price{font-size:20px;font-family:'Syne',sans-serif;font-weight:900;color:var(--btc);}
-.chg{font-size:11px;padding:2px 7px;border-radius:3px;}
-.chg.pos{background:var(--ed);color:var(--even);}
-.chg.neg{background:var(--od);color:var(--odd);}
-.chart-wrap{flex:1;min-height:0;position:relative;}
-#tv_chart{width:100%;height:100%;}
-.chart-wrap::before{content:'';position:absolute;top:0;left:0;width:46px;height:46px;
-  border-top:2px solid var(--btc);border-left:2px solid var(--btc);opacity:.35;z-index:3;pointer-events:none;}
-.chart-wrap::after{content:'';position:absolute;bottom:0;right:0;width:46px;height:46px;
-  border-bottom:2px solid var(--btc);border-right:2px solid var(--btc);opacity:.35;z-index:3;pointer-events:none;}
-.ctr{position:absolute;top:0;right:0;width:46px;height:46px;
-  border-top:2px solid var(--btc);border-right:2px solid var(--btc);opacity:.35;z-index:3;pointer-events:none;}
-.cbl{position:absolute;bottom:0;left:0;width:46px;height:46px;
-  border-bottom:2px solid var(--btc);border-left:2px solid var(--btc);opacity:.35;z-index:3;pointer-events:none;}
-
-/* Right panel */
-.panel{display:flex;flex-direction:column;overflow-y:auto;
-  background:rgba(5,5,5,.7);backdrop-filter:blur(12px);}
-.panel::-webkit-scrollbar{width:3px;}
-.panel::-webkit-scrollbar-thumb{background:var(--b2);border-radius:2px;}
-
-/* Round box */
-.round-box{background:rgba(12,12,12,.98);border-bottom:1px solid var(--b1);padding:12px 14px;flex-shrink:0;}
-.row2{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
-.fld{} .fld-l{font-size:8px;color:var(--m);letter-spacing:1.5px;text-transform:uppercase;}
-.fld-v{font-size:12px;color:var(--text);margin-top:1px;}
-.fld-v.btc{color:var(--btc);}
-.fld-v.neon{color:var(--neon);}
-.fld-v.even{color:var(--even);}
-.pill{font-size:8px;font-weight:600;padding:3px 9px;border-radius:20px;letter-spacing:1px;text-transform:uppercase;}
-.p-open{background:var(--ed);color:var(--even);border:1px solid rgba(74,222,128,.3);}
-.p-pend{background:var(--btc-dim);color:var(--btc);border:1px solid rgba(247,147,26,.3);}
-.p-sett{background:var(--neon-dim);color:var(--neon);border:1px solid rgba(213,253,81,.3);}
-.p-sync{background:rgba(80,80,80,.1);color:var(--m);border:1px solid var(--b1);}
-
-.pool-lbl{display:flex;justify-content:space-between;font-size:9px;margin-bottom:4px;}
-.pool-track{height:6px;background:var(--od);border-radius:3px;overflow:hidden;border:1px solid var(--b1);}
-.pool-fill{height:100%;background:linear-gradient(90deg,var(--even),#22c55e);border-radius:3px;transition:width .5s;}
-.sg{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:9px;}
-.si{background:var(--s2);border:1px solid var(--b1);border-radius:5px;padding:7px 9px;}
-.si-l{font-size:8px;color:var(--m);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:2px;}
-.si-v{font-size:11px;color:var(--text);}
-.si-v.btc{color:var(--btc);}
-.si-v.neon{color:var(--neon);}
-.si-v.even{color:var(--even);}
-.res-ban{display:none;padding:8px;border-radius:5px;margin-top:8px;
-  text-align:center;font-family:'Syne',sans-serif;font-weight:700;font-size:12px;}
-.res-ban.ew{background:var(--ed);border:1px solid rgba(74,222,128,.3);color:var(--even);}
-.res-ban.ow{background:var(--od);border:1px solid rgba(248,113,113,.3);color:var(--odd);}
-.res-ban.show{display:block;}
-
-/* ── AI AGENT ── */
-.ai-box{background:rgba(12,12,12,.98);border-bottom:1px solid var(--b1);padding:10px 14px;flex-shrink:0;}
-.ai-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
-.ai-title{display:flex;align-items:center;gap:6px;font-size:9px;color:var(--ai);
-  letter-spacing:2px;text-transform:uppercase;}
-.ai-dot{width:6px;height:6px;border-radius:50%;background:var(--ai);animation:aipulse 2s infinite;}
-@keyframes aipulse{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(167,139,250,.4);}
-  50%{opacity:.6;box-shadow:0 0 0 4px rgba(167,139,250,0);}}
-.ai-toggle{background:transparent;border:1px solid rgba(167,139,250,.3);color:var(--ai);
-  padding:3px 9px;border-radius:20px;font-family:'DM Mono',monospace;font-size:9px;
-  cursor:pointer;transition:all .2s;letter-spacing:.5px;}
-.ai-toggle:hover{background:var(--ai-dim);}
-.ai-toggle.off{border-color:var(--b1);color:var(--m);}
-.ai-body{display:flex;flex-direction:column;gap:6px;}
-.ai-bars{display:grid;grid-template-columns:1fr 1fr;gap:6px;}
-.ai-bar-wrap{}
-.ai-bar-lbl{display:flex;justify-content:space-between;font-size:9px;margin-bottom:3px;}
-.ai-bar-lbl span:first-child{color:var(--m);}
-.ai-bar-lbl span:last-child{font-weight:600;}
-.ai-bar-lbl span.ev{color:var(--even);}
-.ai-bar-lbl span.od{color:var(--odd);}
-.ai-bar-track{height:5px;background:var(--dim);border-radius:3px;overflow:hidden;}
-.ai-bar-fill{height:100%;border-radius:3px;transition:width .8s cubic-bezier(.4,0,.2,1);}
-.ai-bar-fill.ev{background:linear-gradient(90deg,#22c55e,var(--even));}
-.ai-bar-fill.od{background:linear-gradient(90deg,var(--odd),#ef4444);}
-.ai-verdict{display:flex;align-items:center;justify-content:space-between;
-  padding:6px 9px;background:var(--s2);border:1px solid var(--b1);border-radius:5px;}
-.ai-rec{font-family:'Syne',sans-serif;font-weight:700;font-size:11px;}
-.ai-rec.even{color:var(--even);}
-.ai-rec.odd{color:var(--odd);}
-.ai-rec.neutral{color:var(--m);}
-.ai-conf{font-size:9px;color:var(--m);}
-.ai-thinking{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--ai);padding:4px 0;}
-.ai-spinner{width:10px;height:10px;border:1.5px solid rgba(167,139,250,.2);
-  border-top-color:var(--ai);border-radius:50%;animation:spin .8s linear infinite;}
-@keyframes spin{to{transform:rotate(360deg);}}
-.ai-disabled{text-align:center;padding:8px;color:var(--m);font-size:10px;}
-
-/* Bet form */
-.bet-form{padding:12px 14px;border-bottom:1px solid var(--b1);flex-shrink:0;}
-.sec-t{font-size:8px;color:var(--m);letter-spacing:2px;text-transform:uppercase;margin-bottom:9px;}
-.amt-wrap{position:relative;margin-bottom:12px;}
-.amt-in{width:100%;background:var(--s2);border:1px solid var(--b1);border-radius:7px;
-  padding:11px 48px 11px 12px;font-family:'DM Mono',monospace;font-size:17px;
-  color:var(--text);outline:none;transition:border-color .2s;}
-.amt-in:focus{border-color:var(--btc);}
-.amt-in::placeholder{color:var(--dim);}
-.amt-sfx{position:absolute;right:11px;top:50%;transform:translateY(-50%);font-size:10px;color:var(--btc);}
-.bet-row{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:8px;}
-.bev,.bod{padding:14px 6px;border:none;border-radius:9px;font-family:'Syne',sans-serif;
-  font-size:14px;font-weight:800;cursor:pointer;transition:all .2s;
-  display:flex;flex-direction:column;align-items:center;gap:3px;}
-.bev{background:var(--ed);color:var(--even);border:1px solid rgba(74,222,128,.3);}
-.bev:hover:not(:disabled){background:var(--even);color:#000;transform:translateY(-2px);
-  box-shadow:0 5px 18px rgba(74,222,128,.22);}
-.bod{background:var(--od);color:var(--odd);border:1px solid rgba(248,113,113,.3);}
-.bod:hover:not(:disabled){background:var(--odd);color:#000;transform:translateY(-2px);
-  box-shadow:0 5px 18px rgba(248,113,113,.22);}
-.bev:disabled,.bod:disabled{opacity:.3;cursor:not-allowed;transform:none;}
-.bsub{font-size:8px;font-weight:400;opacity:.7;letter-spacing:.3px;}
-#betHint{text-align:center;font-size:10px;min-height:15px;margin-bottom:7px;color:var(--m);}
-.act{width:100%;padding:10px;border-radius:7px;font-family:'DM Mono',monospace;font-size:11px;
-  cursor:pointer;transition:all .2s;margin-bottom:6px;display:none;letter-spacing:.3px;}
-.act:disabled{opacity:.4;cursor:not-allowed;}
-.a-settle{background:var(--btc-dim);border:1px solid rgba(247,147,26,.3);color:var(--btc);}
-.a-settle:hover:not(:disabled){background:var(--btc);color:#000;}
-.a-claim{background:var(--ed);border:1px solid rgba(74,222,128,.3);color:var(--even);}
-.a-claim:hover:not(:disabled){background:var(--even);color:#000;}
-.a-wd{background:var(--neon-dim);border:1px solid rgba(213,253,81,.3);color:var(--neon);}
-.a-wd:hover:not(:disabled){background:var(--neon);color:#000;}
-.a-new{background:rgba(60,60,60,.1);border:1px solid var(--b1);color:var(--m);}
-.a-new:hover{border-color:var(--btc);color:var(--btc);}
-.pay-ban{display:none;padding:10px 12px;border-radius:7px;margin-bottom:7px;
-  text-align:center;font-family:'Syne',sans-serif;font-weight:700;font-size:13px;}
-.pay-ban.win{background:var(--ed);border:1px solid rgba(74,222,128,.4);color:var(--even);}
-.pay-ban.show{display:block;animation:fup .4s ease;}
-@keyframes fup{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:translateY(0);}}
-
-/* Hash viz */
-.hash-box{padding:10px 14px;border-bottom:1px solid var(--b1);display:none;}
-.hash-t{font-size:8px;color:var(--m);letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;}
-.hash-d{background:var(--s2);border:1px solid var(--b1);border-radius:5px;
-  padding:8px 10px;font-size:9px;word-break:break-all;line-height:1.6;color:var(--m);}
-.hash-last{color:var(--btc);font-weight:700;font-size:13px;}
-.hash-par{display:flex;align-items:center;justify-content:space-between;margin-top:6px;font-size:10px;}
-.par.even{color:var(--even);font-weight:600;}
-.par.odd{color:var(--odd);font-weight:600;}
-
-/* How it works */
-.how-box{padding:12px 14px;}
-.how-t{font-size:8px;color:var(--m);letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;}
-.how-steps{display:flex;flex-direction:column;gap:4px;}
-.step{display:flex;align-items:flex-start;gap:7px;padding:7px 9px;
-  background:var(--s2);border:1px solid var(--b1);border-radius:5px;}
-.sn{width:16px;height:16px;border-radius:50%;background:var(--btc-dim);
-  border:1px solid rgba(247,147,26,.3);color:var(--btc);font-size:8px;
-  display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;}
-.st{font-size:9px;color:var(--m);line-height:1.5;}
-.st strong{color:var(--text);}
-
-@media(max-width:900px){
-  .body{grid-template-columns:1fr;grid-template-rows:260px 1fr;}
-  .chart-col{border-right:none;border-bottom:1px solid var(--b1);}
-}
-</style>
-</head>
-<body>
-<canvas id="graffiti-bg"></canvas>
-<div class="app">
-
-<!-- Header -->
-<header class="hdr">
-  <div class="logo">
-    <div class="logo-hex">₿</div>
-    <div>
-      <div class="logo-txt">BLOCK<span>BET</span></div>
-      <div class="logo-sub">Bitcoin L1 · OP_NET</div>
-    </div>
-  </div>
-  <div class="hdr-right">
-    <a href="https://faucet.opnet.org/" target="_blank" class="btn-faucet">💧 Faucet</a>
-    <div class="badge"><div class="bdot"></div>TESTNET</div>
-    <button class="btn-conn off" id="btnConn" onclick="connectWallet()">Connect OPWallet</button>
-    <button class="btn-disc" id="btnDisc" onclick="disconnectWallet()">✕ Disconnect</button>
-  </div>
-</header>
-
-<!-- Status bar -->
-<div class="sbar warn" id="sbar">
-  <span>&#x1F4E1; Connecting to OP_NET Testnet...</span>
-  <code>opt1sqqa...j30p9</code>
-  <button onclick="showSettings()" style="margin-left:auto;background:transparent;border:1px solid rgba(247,147,26,0.4);color:var(--btc);padding:2px 8px;border-radius:4px;font-size:10px;cursor:pointer;font-family:inherit">&#x2699; Settings</button>
-  <button onclick="inspectWallet()" style="margin-left:4px;background:transparent;border:1px solid #333;color:#555;padding:2px 8px;border-radius:4px;font-size:10px;cursor:pointer;font-family:inherit">&#x1F50D; API</button>
-</div>
-
-<!-- Settings modal -->
-<div id="settingsModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;align-items:center;justify-content:center;">
-  <div style="background:#111;border:1px solid #333;border-radius:12px;padding:24px;width:480px;max-width:95vw;font-family:monospace;">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-      <span style="font-weight:800;font-size:16px;color:var(--btc);">Settings</span>
-      <button onclick="hideSettings()" style="background:transparent;border:none;color:#666;font-size:20px;cursor:pointer;">&#x2715;</button>
-    </div>
-    <label style="font-size:10px;color:#666;letter-spacing:1px;text-transform:uppercase;">Contract Address (opr1...)</label>
-    <input id="inputContract" style="width:100%;background:#0a0a0a;border:1px solid #333;border-radius:6px;padding:8px 10px;font-size:11px;color:#fff;margin:6px 0 14px;outline:none;box-sizing:border-box;" placeholder="opr1..."/>
-    <label style="font-size:10px;color:#666;letter-spacing:1px;text-transform:uppercase;">RPC URL</label>
-    <input id="inputRpc" style="width:100%;background:#0a0a0a;border:1px solid #333;border-radius:6px;padding:8px 10px;font-size:11px;color:#fff;margin:6px 0 4px;outline:none;box-sizing:border-box;" placeholder="https://testnet.opnet.org/api/v1/json-rpc"/>
-    <div style="font-size:10px;color:#555;margin-bottom:16px;">Variants: https://testnet.opnet.org/api/v1/json-rpc &nbsp;|&nbsp; http://localhost:3000/api/v1/json-rpc</div>
-    <button onclick="applySettings()" style="width:100%;background:var(--btc);color:#000;border:none;padding:10px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">Apply &amp; Reload</button>
-  </div>
-</div>
-
-<!-- Body -->
-<div class="body">
-
-  <!-- Chart -->
-  <div class="chart-col">
-    <div class="chart-hdr">
-      <div class="chart-sym"><span style="color:var(--btc);font-size:18px;">₿</span> BTC/USDT</div>
-      <div style="display:flex;align-items:center;gap:8px;">
-        <div class="chart-price" id="chartPrice">—</div>
-        <div class="chg pos" id="chartChg">—</div>
-      </div>
-    </div>
-    <div class="chart-wrap">
-      <div id="tv_chart"></div>
-      <div class="ctr"></div><div class="cbl"></div>
-    </div>
-  </div>
-
-  <!-- Panel -->
-  <div class="panel">
-
-    <!-- Round -->
-    <div class="round-box">
-      <div class="row2">
-        <div class="fld"><div class="fld-l">Round</div><div class="fld-v" id="roundId">—</div></div>
-        <div class="fld" style="text-align:center;"><div class="fld-l">Target Block</div><div class="fld-v btc" id="targetBlock">—</div></div>
-        <span class="pill p-sync" id="pill">SYNCING</span>
-      </div>
-      <div class="pool-lbl">
-        <span style="color:var(--even)">EVEN &nbsp;<span id="evenPool">0</span> sats</span>
-        <span style="color:var(--m)" id="poolPct">50%</span>
-        <span style="color:var(--odd)"><span id="oddPool">0</span> sats&nbsp; ODD</span>
-      </div>
-      <div class="pool-track"><div class="pool-fill" id="poolBar" style="width:50%"></div></div>
-      <div class="sg">
-        <div class="si">
-          <div class="si-l">Wallet</div>
-          <div class="si-v" id="walletAddr" style="font-size:9px;word-break:break-all;">Not connected</div>
-        </div>
-        <div class="si">
-          <div class="si-l">Balance</div>
-          <div class="si-v btc" id="walletBal">—</div>
-        </div>
-        <div class="si">
-          <div class="si-l">Current Block</div>
-          <div class="si-v neon" id="curBlock">—</div>
-        </div>
-        <div class="si">
-          <div class="si-l">My Bet</div>
-          <div class="si-v even" id="myBet">—</div>
-        </div>
-      </div>
-      <div class="res-ban" id="resBan"></div>
-    </div>
-
-    <!-- AI Agent -->
-    <div class="ai-box" id="aiBox">
-      <div class="ai-hdr">
-        <div class="ai-title"><div class="ai-dot"></div>AI Prediction Agent</div>
-        <button class="ai-toggle" id="aiToggle" onclick="toggleAI()">ON</button>
-      </div>
-      <div id="aiContent">
-        <div class="ai-thinking" id="aiThinking">
-          <div class="ai-spinner"></div><span>Analysing block patterns...</span>
-        </div>
-        <div class="ai-body" id="aiResult" style="display:none">
-          <div class="ai-bars">
-            <div class="ai-bar-wrap">
-              <div class="ai-bar-lbl">
-                <span>EVEN</span>
-                <span class="ev" id="aiEvenPct">—</span>
-              </div>
-              <div class="ai-bar-track">
-                <div class="ai-bar-fill ev" id="aiEvenBar" style="width:50%"></div>
-              </div>
-            </div>
-            <div class="ai-bar-wrap">
-              <div class="ai-bar-lbl">
-                <span>ODD</span>
-                <span class="od" id="aiOddPct">—</span>
-              </div>
-              <div class="ai-bar-track">
-                <div class="ai-bar-fill od" id="aiOddBar" style="width:50%"></div>
-              </div>
-            </div>
-          </div>
-          <div class="ai-verdict">
-            <div>
-              <div style="font-size:8px;color:var(--m);letter-spacing:1px;text-transform:uppercase;margin-bottom:2px;">Recommendation</div>
-              <div class="ai-rec" id="aiRec">—</div>
-            </div>
-            <div style="text-align:right">
-              <div style="font-size:8px;color:var(--m);letter-spacing:1px;text-transform:uppercase;margin-bottom:2px;">Confidence</div>
-              <div class="ai-conf" id="aiConf">—</div>
-            </div>
-          </div>
-          <div style="font-size:9px;color:var(--m);margin-top:2px;line-height:1.5;" id="aiReason"></div>
-        </div>
-        <div class="ai-disabled" id="aiOff" style="display:none">
-          AI Agent disabled — click ON to enable predictions
-        </div>
-      </div>
-    </div>
-
-    <!-- Hash viz -->
-    <div class="hash-box" id="hashBox">
-      <div class="hash-t">Winning Block Hash · Last Nibble</div>
-      <div class="hash-d" id="hashD">—</div>
-      <div class="hash-par">
-        <span style="color:var(--m);font-size:9px;">Last nibble parity:</span>
-        <span class="par" id="hashPar">—</span>
-      </div>
-    </div>
-
-    <!-- Bet form -->
-    <div class="bet-form">
-      <div class="sec-t">Place your bet</div>
-      <div class="amt-wrap">
-        <input class="amt-in" id="betAmt" type="number" placeholder="10000" step="1000" min="10000"/>
-        <span class="amt-sfx">SATS</span>
-      </div>
-      <div class="bet-row">
-        <button class="bev" id="btnEven" onclick="placeBet(true)" disabled>
-          EVEN<span class="bsub">0,2,4,6,8,a,c,e</span>
-        </button>
-        <button class="bod" id="btnOdd" onclick="placeBet(false)" disabled>
-          ODD<span class="bsub">1,3,5,7,9,b,d,f</span>
-        </button>
-      </div>
-      <div id="betHint">Connect OPWallet to start betting</div>
-      <button class="act a-settle" id="btnSettle" onclick="doSettle()">⛏ Settle Round — Target Block Mined</button>
-      <button class="act a-claim"  id="btnClaim"  onclick="doClaim()">🏆 Claim Winnings</button>
-      <div class="pay-ban" id="payBan"></div>
-      <button class="act a-wd"     id="btnWd"     onclick="doWithdraw()">⬇ Withdraw BTC</button>
-      <button class="act a-new"    id="btnNew"    onclick="doNewRound()">▶ Start New Round</button>
-    </div>
-
-    <!-- How it works -->
-    <div class="how-box">
-      <div class="how-t">How it works</div>
-      <div class="how-steps">
-        <div class="step"><div class="sn">1</div><div class="st"><strong>Bet EVEN or ODD</strong> — predict the parity of the last hex nibble of the next Bitcoin block hash</div></div>
-        <div class="step"><div class="sn">2</div><div class="st"><strong>Wait for target block</strong> — once mined, anyone can call Settle to reveal the result</div></div>
-        <div class="step"><div class="sn">3</div><div class="st"><strong>Claim & Withdraw</strong> — winners share the pool proportionally, minus 2% house fee, paid in BTC</div></div>
-      </div>
-    </div>
-  </div>
-</div><!-- body -->
-</div><!-- app -->
-
-<script>
-// ─── EVM ISOLATION: intercept extension conflicts before they throw ───────────
-// MetaMask / evmMask / StacksProvider all try to redefine window.ethereum
-// which is already set as non-configurable by the first extension that loaded.
-// We intercept Object.defineProperty globally so these re-definition attempts
-// silently fail instead of throwing uncaught TypeErrors into the console.
-(function patchDefineProperty() {
-  const _def = Object.defineProperty.bind(Object);
-  const BLOCKED = ['ethereum', 'web3', 'StacksProvider'];
-  Object.defineProperty = function(obj, prop, desc) {
-    if (obj === window && BLOCKED.includes(prop)) {
-      // Check if property already exists and is non-configurable
-      const existing = Object.getOwnPropertyDescriptor(obj, prop);
-      if (existing && !existing.configurable) {
-        // Silently skip — extension conflict, not our code
-        return obj;
-      }
+    struct Pool {
+        uint256 upPool;
+        uint256 downPool;
     }
-    try {
-      return _def(obj, prop, desc);
-    } catch(e) {
-      // Last-resort: swallow extension re-define errors
-      console.debug('[BlockBet] Suppressed defineProperty conflict on', prop);
-      return obj;
+
+    struct Round {
+        uint256 startTime;
+        uint256 endTime;
+        uint256 startPrice;
+        uint256 endPrice;
+        bool settled;
+        bool outcome;
     }
-  };
-  // Also patch defineProperties (used by inpage.js)
-  const _defProps = Object.defineProperties.bind(Object);
-  Object.defineProperties = function(obj, props) {
-    if (obj === window) {
-      for (const prop of Object.keys(props || {})) {
-        if (BLOCKED.includes(prop)) {
-          const existing = Object.getOwnPropertyDescriptor(obj, prop);
-          if (existing && !existing.configurable) {
-            delete props[prop]; // remove conflicting key before calling original
-          }
-        }
-      }
+
+    // ═══════════════════════════════════════════════════════════════
+    // ORIGINAL STATE (V5 — unchanged)
+    // ═══════════════════════════════════════════════════════════════
+
+    address public owner;
+    uint256 public currentRound;
+    uint256 public roundDuration = 300; // 5 minutes
+    uint256 public platformFee = 200;   // 2%
+    uint256 constant DENOM = 10000;
+
+    mapping(uint256 => Round)                                              public rounds;
+    mapping(uint256 => mapping(address => Pool))                           public pools;
+    mapping(uint256 => mapping(address => mapping(address => uint256)))    public upBets;
+    mapping(uint256 => mapping(address => mapping(address => uint256)))    public downBets;
+
+    // ═══════════════════════════════════════════════════════════════
+    // XP SYSTEM (new)
+    // ═══════════════════════════════════════════════════════════════
+
+    uint256 public constant XP_TOTAL    = 1_000_000e18; // 1,000,000 XP (18 decimals)
+    uint256 public constant XP_WEEKS    = 17;            // 17 weeks ~4 months
+    uint256 public constant XP_PER_WEEK = XP_TOTAL / XP_WEEKS; // ~58,823 XP per week
+    uint256 public constant WEEK        = 7 days;
+
+    /// Unix-timestamp of first Monday 00:00 UTC after deploy
+    uint256 public xpStart;
+
+    /// How many epochs distributed (0..17)
+    uint256 public xpEpochsDone;
+
+    /// Current active epoch (week)
+    uint256 public xpEpochNow;
+
+    /// XP balance per player
+    mapping(address => uint256) public xpBalance;
+
+    /// Total XP given out
+    uint256 public xpGiven;
+
+    /// All unique players (for iteration)
+    address[] public players;
+    mapping(address => bool) private _known;
+
+    /// Player bet volume per week: epochVolume[epoch][player]
+    mapping(uint256 => mapping(address => uint256)) public epochVolume;
+
+    /// Total volume per week: epochTotal[epoch]
+    mapping(uint256 => uint256) public epochTotal;
+
+    // ═══════════════════════════════════════════════════════════════
+    // EVENTS
+    // ═══════════════════════════════════════════════════════════════
+
+    event BetPlaced(uint256 roundId, address token, address user, bool direction, uint256 amount);
+    event RoundStarted(uint256 roundId, uint256 startPrice);
+    event RoundSettled(uint256 roundId, bool outcome, uint256 endPrice);
+    event Claimed(uint256 roundId, address token, address user, uint256 payout);
+
+    event XpAwarded(uint256 indexed epoch, address indexed player, uint256 amount);
+    event XpEpochDone(uint256 indexed epoch, uint256 totalXp, uint256 numPlayers);
+    event PlayerJoined(address indexed player);
+
+    // ═══════════════════════════════════════════════════════════════
+    // MODIFIERS
+    // ═══════════════════════════════════════════════════════════════
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Not owner");
+        _;
     }
-    try { return _defProps(obj, props); } catch(e) { return obj; }
-  };
-})();
 
-// ─── CONFIG ───────────────────────────────────────────────────────────────────
-const CONTRACT = 'opt1sqqpzxuet8963842vd56rmt3jaa4cr3fj5vr0hryp';
-function getContract() { return window._contractOverride || CONTRACT; }
-const CONTRACT_BCRT = 'tb1sqqat6q5668ckvr5ger3xyrlp5mtayfegag5m0c39';
-const RPC_URLS = [
-  'https://testnet.opnet.org/api/v1/json-rpc',
-  'https://testnet.opnet.org/json-rpc',
-];
-const MIN_SATS = 10000;
+    // ═══════════════════════════════════════════════════════════════
+    // CONSTRUCTOR
+    // ═══════════════════════════════════════════════════════════════
 
-// Safe OPWallet getter — scans all known injection points, never touches window.ethereum
-function getOPWallet() {
-  const candidates = [
-    () => window.opnet,
-    () => window.OPNet,
-    () => window.opwallet,
-    () => window.OPWallet,
-    () => window.unisat?.opnet,
-    () => window.bitcoin,
-    () => window.btc,
-    () => window.opnetWallet,
-  ];
-  for (const fn of candidates) {
-    try {
-      const w = fn();
-      if (w && typeof w === 'object') {
-        if (typeof w.requestAccounts === 'function' ||
-            typeof w.signInteraction === 'function' ||
-            typeof w.signAndBroadcastInteraction === 'function') {
-          return w;
-        }
-      }
-    } catch(e) { /* skip */ }
-  }
-  return null;
-}
+    /**
+     * @param _startPrice  Initial BTC/USD price for round #1
+     * @param _xpStart     Timestamp of first Monday 00:00 UTC.
+     *                     Pass 0 — contract auto-calculates next Monday.
+     */
+    constructor(uint256 _startPrice, uint256 _xpStart) {
+        owner = msg.sender;
 
-// ─── STATE ────────────────────────────────────────────────────────────────────
-let wallet      = null;
-let opnetAddr   = null;
-let round       = null;
-let myBet       = null;
-let myPending   = 0n;
-let isBusy      = false;
-let aiOn        = true;
-let aiTimer     = null;
-let lastPrice   = null;
-let workingRpc  = null;
-
-// ─── ENCODING ─────────────────────────────────────────────────────────────────
-const toHex = b => Array.from(b).map(x => x.toString(16).padStart(2,'0')).join('');
-function fromHex(h) {
-  h = h.startsWith('0x') ? h.slice(2) : h;
-  const o = new Uint8Array(h.length / 2);
-  for (let i = 0; i < o.length; i++) o[i] = parseInt(h.slice(i*2, i*2+2), 16);
-  return o;
-}
-function cat(...a) {
-  const t = a.reduce((n,x) => n+x.length, 0), o = new Uint8Array(t);
-  let p = 0; a.forEach(x => { o.set(x, p); p += x.length; }); return o;
-}
-const b8 = v => new Uint8Array([v ? 1 : 0]);
-function u64be(v) {
-  const n = BigInt(v), b = new Uint8Array(8);
-  for (let i = 0; i < 8; i++) b[7-i] = Number((n >> BigInt(i*8)) & 0xffn);
-  return b;
-}
-function a32(b) { if (b.length !== 32) throw new Error('need 32 bytes'); return b; }
-function fnvSel(sig) {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < sig.length; i++) { h ^= sig.charCodeAt(i); h = (Math.imul(h, 0x01000193) >>> 0); }
-  const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, h, true); return b;
-}
-const mkCall    = (sig, ...args) => cat(fnvSel(sig), ...args);
-const mkCallHex = (sig, ...args) => toHex(mkCall(sig, ...args));
-const s2btc     = s => (Number(s) / 1e8).toFixed(8).replace(/\.?0+$/, '') || '0';
-
-// FIX #3: sha256 without secp256k1/WASM — uses only Web Crypto API (built-in, no deps)
-async function sha256hex(hex) {
-  const bytes = fromHex(hex);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', bytes.buffer);
-  return new Uint8Array(hashBuffer);
-}
-
-// ─── DECODER ──────────────────────────────────────────────────────────────────
-class D {
-  constructor(h) { const b = fromHex(h); this.v = new DataView(b.buffer); this.o = 0; }
-  bool()  { return this.v.getUint8(this.o++) !== 0; }
-  u256()  {
-    let v = 0n;
-    for (let i = 0; i < 32; i++) v = (v << 8n) | BigInt(this.v.getUint8(this.o+i));
-    this.o += 32; return v;
-  }
-}
-const decRound = h => {
-  const d = new D(h);
-  return {
-    roundId: d.u256(), targetBlock: d.u256(),
-    evenPool: d.u256(), oddPool: d.u256(),
-    settled: d.bool(), winnerSide: Number(d.u256()),
-    currentBlock: d.u256(), winningBlock: d.u256(),
-  };
-};
-const decBet     = h => { const d = new D(h); return { even: d.u256(), odd: d.u256(), claimed: d.bool() }; };
-const decPending = h => new D(h).u256();
-
-// ─── RPC READ ─────────────────────────────────────────────────────────────────
-async function rpcRead(sig, args = [], from = null) {
-  const cd   = mkCallHex(sig, ...args);
-  const addr = window._contractOverride || getContract();
-
-  // Method 1: OPWallet provider (avoids CORS)
-  const opw = getOPWallet();
-  if (opw?.provider?.call) {
-    try {
-      const result = await opw.provider.call({ to: addr, data: cd });
-      const d = (result || '').replace(/^0x/, '');
-      console.log('[RPC opnet.provider] len=', d.length);
-      workingRpc = '__opnet_provider__';
-      return d;
-    } catch(e) {
-      console.warn('[RPC opnet.provider failed]', e.message);
-    }
-  }
-
-  // Method 2: callReadOnly / readContract
-  if (opw?.callReadOnly || opw?.readContract) {
-    try {
-      const fn = opw.callReadOnly || opw.readContract;
-      const result = await fn({ to: addr, data: cd });
-      const d = (result?.result || result?.data || result || '').toString().replace(/^0x/, '');
-      console.log('[RPC callReadOnly] len=', d.length);
-      workingRpc = '__opnet_callReadOnly__';
-      return d;
-    } catch(e) {
-      console.warn('[RPC callReadOnly failed]', e.message);
-    }
-  }
-
-  // Method 3: Direct fetch + CORS proxy fallback
-  const frm = from || wallet?.address || null;
-  const paramSets = [];
-  for (const a of [addr, CONTRACT_BCRT]) {
-    if (frm) paramSets.push([a, cd, frm]);
-    paramSets.push([a, cd]);
-  }
-  const PROXY = 'https://corsproxy.io/?';
-  const directUrls = (workingRpc && !workingRpc.startsWith('__'))
-    ? [workingRpc, ...RPC_URLS.filter(u => u !== workingRpc)]
-    : RPC_URLS;
-  const allUrls = [...directUrls, ...directUrls.map(u => PROXY + encodeURIComponent(u))];
-
-  let lastErr = new Error('All RPC endpoints failed');
-  for (const url of allUrls) {
-    for (const params of paramSets) {
-      try {
-        const resp = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'btc_call', params }),
-          signal: AbortSignal.timeout(8000),
-        });
-        if (!resp.ok) { lastErr = new Error('HTTP ' + resp.status); continue; }
-        const j = await resp.json();
-        if (j.error) {
-          const msg = typeof j.error === 'object' ? j.error.message : String(j.error);
-          console.warn('[RPC ERR]', sig, url, msg);
-          lastErr = new Error(msg); continue;
-        }
-        let d = '';
-        if (typeof j.result === 'string') d = j.result;
-        else if (j.result?.result) d = j.result.result;
-        else if (j.result?.data)   d = j.result.data;
-        d = d.replace(/^0x/, '');
-        if (!d) {
-          console.warn('[RPC EMPTY]', sig, 'addr=' + params[0]);
+        if (_xpStart > 0) {
+            xpStart = _xpStart;
         } else {
-          console.log('[RPC OK]', sig, 'via', url.slice(0,40), 'len=', d.length);
-          workingRpc = url;
+            // Calculate next Monday 00:00 UTC automatically
+            uint256 dow = (block.timestamp / 86400 + 4) % 7;
+            uint256 daysLeft = dow == 0 ? 1 : (8 - dow) % 7;
+            if (daysLeft == 0) daysLeft = 7;
+            xpStart = (block.timestamp / 86400) * 86400 + daysLeft * 86400;
         }
-        return d;
-      } catch(e) { lastErr = e; console.warn('[RPC FAIL]', url.slice(0,50), e.message); }
-    }
-  }
-  throw lastErr;
-}
 
-// ─── RPC WRITE ────────────────────────────────────────────────────────────────
-// Web3API-W4XYV4k7.js returns "User rejected" for wrong param format too.
-// We must NOT stop on first "rejected" — try all formats first.
-async function rpcWrite(sig, args = [], sats = 0) {
-  const opw = getOPWallet();
-  if (!opw) throw new Error("OPWallet not found");
-
-  const calldataBytes = mkCall(sig, ...args);
-  const contract      = getContract();
-
-  // Collect all available methods incl. prototype
-  const availMethods = [];
-  try {
-    const keys = new Set([
-      ...Object.keys(opw),
-      ...Object.getOwnPropertyNames(Object.getPrototypeOf(opw) || {}),
-    ]);
-    for (const k of keys) {
-      try { if (k !== 'constructor' && typeof opw[k] === 'function') availMethods.push(k); } catch(e){}
-    }
-  } catch(e){}
-  console.log('[rpcWrite]', sig, '| methods:', availMethods.join(','));
-
-  // All param combinations to try
-  const cd_u8  = calldataBytes;
-  const cd_0x  = '0x' + toHex(calldataBytes);
-  const cd_hex = toHex(calldataBytes);
-  const cd_arr = Array.from(calldataBytes);
-
-  // Build every combination: method × calldata format × fee type
-  const variants = [];
-  for (const method of ['signInteraction', 'signAndBroadcastInteraction']) {
-    if (!availMethods.includes(method)) continue;
-    for (const cd of [cd_u8, cd_0x, cd_hex, cd_arr]) {
-      for (const fees of [
-        { priorityFee: 0,        feeRate: 10 },
-        { priorityFee: '0',      feeRate: '10' },
-        { priorityFee: BigInt(0),feeRate: BigInt(10) },
-        { priorityFee: 330,      feeRate: 10 },   // some versions require non-zero priorityFee
-      ]) {
-        variants.push({ method, params: { to: contract, calldata: cd, ...fees } });
-      }
-    }
-  }
-
-  let realUserReject = false;
-  let lastMsg = '';
-
-  for (const { method, params } of variants) {
-    try {
-      console.log(`[rpcWrite] ${method} cd=${typeof params.calldata} fee=${params.priorityFee}`);
-      const r = await opw[method](params);
-      console.log('[rpcWrite] SUCCESS', method, r);
-      return r;
-    } catch(e) {
-      const msg = (e.message || '').toLowerCase();
-      lastMsg = e.message || 'unknown';
-
-      // Only treat as real user reject if there were NO prior attempts
-      // (i.e. popup was shown and user clicked cancel, not auto-rejected)
-      // We detect this by checking if the error came after popup was visible
-      const isAutoReject = msg.includes('user rejected') || msg.includes('user refused');
-      const isHardReject = msg.includes('denied') || msg.includes('cancel') || msg.includes('dismissed');
-
-      if (isHardReject) {
-        // These strings = user explicitly pressed Cancel button
-        realUserReject = true;
-        break;
-      }
-      // "user rejected" alone = could be format rejection, keep trying
-      console.warn(`[rpcWrite] ${method} cd=${typeof params.calldata}:`, e.message);
-    }
-  }
-
-  if (realUserReject) {
-    const err = new Error('User rejected the request.');
-    err._userReject = true;
-    throw err;
-  }
-
-  throw new Error(
-    'All OPWallet call formats failed.\n' +
-    'Last error: ' + lastMsg + '\n' +
-    'Methods tried: ' + availMethods.join(', ') + '\n\n' +
-    'Try: click 🔍 API button and send screenshot of result.'
-  );
-}
-
-// ─── WALLET ───────────────────────────────────────────────────────────────────
-async function connectWallet() {
-  const opw = getOPWallet();
-  if (!opw) {
-    alert('OPWallet not found!\n\nInstall: github.com/btc-vision/opwallet/releases\n\nThen:\n1. OPWallet → Settings → Network → Testnet\n2. Get tBTC: faucet.opnet.org');
-    return;
-  }
-  const btn = document.getElementById('btnConn');
-  btn.innerText = 'Connecting...'; btn.disabled = true;
-  try {
-    const [addrs, pk] = await Promise.all([
-      opw.requestAccounts(),
-      opw.getPublicKey(),
-    ]);
-    if (!addrs?.length) throw new Error('No accounts');
-    const addr = addrs[0];
-
-    const isTestnet = addr.startsWith('tb1') || addr.startsWith('opt1');
-    const isRegtest = addr.startsWith('bcrt1') || addr.startsWith('opr1') || addr.startsWith('bcrt');
-    console.log('[connectWallet] addr=', addr, 'isTestnet=', isTestnet, 'isRegtest=', isRegtest);
-
-    let networkName = '';
-    try {
-      const net = await opw.getNetwork();
-      networkName = (net?.network || net || '').toLowerCase();
-      console.log('[connectWallet] network=', networkName);
-    } catch(e) { console.log('getNetwork not available'); }
-
-    const onWrongNetwork = isRegtest || networkName.includes('regtest') || networkName.includes('mainnet');
-    if (onWrongNetwork) {
-      btn.innerText = 'Connect OPWallet'; btn.disabled = false; btn.onclick = connectWallet;
-      alert('Wrong network! OPWallet is on ' + (networkName || (isRegtest ? 'Regtest' : 'unknown')) + '.\n\nPlease switch to TESTNET:\nOPWallet → Settings → Network → Testnet');
-      return;
+        _startNewRound(_startPrice);
     }
 
-    wallet    = { address: addr, publicKey: pk };
-    opnetAddr = await sha256hex(pk);
-    const short = addr.slice(0,10) + '...' + addr.slice(-6);
-    document.getElementById('walletAddr').innerText = short;
-    btn.innerHTML = '<div class="wdot"></div>' + short;
-    btn.className = 'btn-conn on'; btn.onclick = null;
-    document.getElementById('btnDisc').style.display = 'flex';
-    updateBtns(); fetchBalance();
-    await refreshMyBet(); runAI();
-    try { opw.on && opw.on('disconnect', disconnectWallet); } catch(e) {}
-  } catch(e) {
-    console.error('connectWallet:', e);
-    btn.innerText = 'Connect OPWallet'; btn.disabled = false; btn.onclick = connectWallet;
-    if (!isUserReject(e)) alert('Connection failed: ' + e.message);
-  }
-}
+    // ═══════════════════════════════════════════════════════════════
+    // BETS — ETH (original V5, with _track added)
+    // ═══════════════════════════════════════════════════════════════
 
-function disconnectWallet() {
-  wallet = null; opnetAddr = null; round = null; myBet = null; myPending = 0n;
-  const btn = document.getElementById('btnConn');
-  btn.innerText = 'Connect OPWallet'; btn.className = 'btn-conn off'; btn.disabled = false; btn.onclick = connectWallet;
-  document.getElementById('btnDisc').style.display = 'none';
-  document.getElementById('walletAddr').innerText = '—';
-  document.getElementById('walletBal').innerText  = '— tBTC';
-  document.getElementById('myBet').innerText = '—';
-  hideAll(); setSync();
-}
+    function betUp() external payable {
+        require(block.timestamp < rounds[currentRound].endTime, "Round ended");
+        _track(msg.sender, msg.value);
+        pools[currentRound][address(0)].upPool += msg.value;
+        upBets[currentRound][address(0)][msg.sender] += msg.value;
+        emit BetPlaced(currentRound, address(0), msg.sender, true, msg.value);
+    }
 
-async function fetchBalance() {
-  if (!wallet) return;
-  const opw = getOPWallet();
-  if (!opw) return;
-  try {
-    let sats = null;
-    const methods = [
-      () => opw.getBalance?.(),
-      () => opw.getAccountBalance?.(wallet.address),
-      () => opw.getBalances?.(),
-      () => opw.getBitcoinBalance?.(),
-    ];
-    for (const fn of methods) {
-      try {
-        const b = await fn();
-        if (b === null || b === undefined) continue;
-        if (typeof b === 'bigint') { sats = b; break; }
-        if (typeof b === 'number') { sats = BigInt(Math.round(b)); break; }
-        if (typeof b === 'string') { sats = BigInt(b); break; }
-        if (typeof b === 'object') {
-          const v = b.confirmed ?? b.balance ?? b.total ?? b.amount ?? b.value;
-          if (v !== undefined && v !== null) {
-            sats = BigInt(typeof v === 'string' ? Math.round(parseFloat(v) * (v.includes('.') ? 1e8 : 1)) : Math.round(Number(v)));
-            break;
-          }
+    function betDown() external payable {
+        require(block.timestamp < rounds[currentRound].endTime, "Round ended");
+        _track(msg.sender, msg.value);
+        pools[currentRound][address(0)].downPool += msg.value;
+        downBets[currentRound][address(0)][msg.sender] += msg.value;
+        emit BetPlaced(currentRound, address(0), msg.sender, false, msg.value);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // BETS — ERC20 (original V5, with _track added)
+    // ═══════════════════════════════════════════════════════════════
+
+    function betUpToken(address token, uint256 amount) external {
+        require(block.timestamp < rounds[currentRound].endTime, "Round ended");
+        _track(msg.sender, amount);
+        IERC20(token).transferFrom(msg.sender, address(this), amount);
+        pools[currentRound][token].upPool += amount;
+        upBets[currentRound][token][msg.sender] += amount;
+        emit BetPlaced(currentRound, token, msg.sender, true, amount);
+    }
+
+    function betDownToken(address token, uint256 amount) external {
+        require(block.timestamp < rounds[currentRound].endTime, "Round ended");
+        _track(msg.sender, amount);
+        IERC20(token).transferFrom(msg.sender, address(this), amount);
+        pools[currentRound][token].downPool += amount;
+        downBets[currentRound][token][msg.sender] += amount;
+        emit BetPlaced(currentRound, token, msg.sender, false, amount);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // SETTLE (original V5 — unchanged)
+    // ═══════════════════════════════════════════════════════════════
+
+    function settle(uint256 endPrice) external onlyOwner {
+        Round storage r = rounds[currentRound];
+        require(!r.settled, "Already settled");
+        require(block.timestamp >= r.endTime, "Round not ended");
+        r.settled = true;
+        r.endPrice = endPrice;
+        r.outcome = endPrice > r.startPrice;
+        emit RoundSettled(currentRound, r.outcome, endPrice);
+        _tickEpoch();
+        _startNewRound(endPrice);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // CLAIM (original V5 — unchanged)
+    // ═══════════════════════════════════════════════════════════════
+
+    function claim(uint256 roundId, address token) external {
+        Round storage r = rounds[roundId];
+        require(r.settled, "Round not settled");
+        Pool storage p = pools[roundId][token];
+        uint256 userBet;
+        uint256 reward;
+        if (r.outcome) {
+            userBet = upBets[roundId][token][msg.sender];
+            require(userBet > 0, "No win");
+            reward = (userBet * (p.upPool + p.downPool)) / p.upPool;
+            upBets[roundId][token][msg.sender] = 0;
+        } else {
+            userBet = downBets[roundId][token][msg.sender];
+            require(userBet > 0, "No win");
+            reward = (userBet * (p.upPool + p.downPool)) / p.downPool;
+            downBets[roundId][token][msg.sender] = 0;
         }
-      } catch(e2) {}
-    }
-    document.getElementById('walletBal').innerText = sats !== null && sats >= 0n ? s2btc(sats) + ' tBTC' : '— tBTC';
-  } catch(e) {
-    document.getElementById('walletBal').innerText = '— tBTC';
-  }
-}
-
-// ─── DATA ─────────────────────────────────────────────────────────────────────
-async function refreshRound() {
-  setHint('⏳ Loading contract...', 'var(--m)');
-  try {
-    const hex = await rpcRead('getRoundInfo()');
-    if (!hex || hex.length < 64) {
-      setSbar(false, 'Empty response (len=' + (hex?.length ?? 0) + ')');
-      setHint('▶ Contract ready — press "Start First Round" to begin!', 'var(--btc)');
-      show('btnNew');
-      const btnNew = document.getElementById('btnNew');
-      btnNew.innerText = '▶ Start First Round (Initialize Contract)';
-      btnNew.style.background = 'var(--btc)';
-      btnNew.style.color = '#000';
-      btnNew.style.border = 'none';
-      btnNew.style.fontWeight = '700';
-      document.getElementById('btnEven').disabled = true;
-      document.getElementById('btnOdd').disabled  = true;
-      return;
-    }
-    round = decRound(hex);
-    updateRoundUI();
-    setSbar(true);
-  } catch(e) {
-    console.error('refreshRound:', e.message);
-    setSbar(false, e.message);
-    setHint('❌ ' + e.message.slice(0,60), 'var(--odd)');
-  }
-}
-
-async function refreshMyBet() {
-  if (!opnetAddr || !wallet) return;
-  try {
-    const addr32 = a32(opnetAddr);
-    const [bh, ph] = await Promise.all([
-      rpcRead('getBetInfo(address)',           [addr32], wallet.address),
-      rpcRead('getPendingWithdrawal(address)', [addr32], wallet.address),
-    ]);
-    myBet     = decBet(bh);
-    myPending = decPending(ph);
-    const tot = myBet.even + myBet.odd;
-    document.getElementById('myBet').innerText = tot > 0n
-      ? Number(tot).toLocaleString() + ' sats (' + (myBet.even > 0n ? '🟢EVEN' : '🔴ODD') + ')'
-      : '—';
-    updateActBtns(); updateBtns(); fetchBalance();
-  } catch(e) { console.warn('refreshMyBet:', e.message); }
-}
-
-// ─── AI AGENT ─────────────────────────────────────────────────────────────────
-function toggleAI() {
-  aiOn = !aiOn;
-  const btn = document.getElementById('aiToggle');
-  btn.innerText = aiOn ? 'ON' : 'OFF';
-  btn.className = 'ai-toggle' + (aiOn ? '' : ' off');
-  document.getElementById('aiThinking').style.display = 'none';
-  document.getElementById('aiResult').style.display   = 'none';
-  document.getElementById('aiOff').style.display      = aiOn ? 'none' : 'block';
-  if (aiTimer) clearTimeout(aiTimer);
-  if (aiOn) runAI();
-}
-
-function runAI() {
-  if (!aiOn) return;
-  document.getElementById('aiThinking').style.display = 'flex';
-  document.getElementById('aiResult').style.display   = 'none';
-  document.getElementById('aiOff').style.display      = 'none';
-  setTimeout(computeAI, 900 + Math.random() * 700);
-}
-
-function computeAI() {
-  if (!aiOn) return;
-  const ep  = round ? Number(round.evenPool) : 0;
-  const op  = round ? Number(round.oddPool)  : 0;
-  const tot = ep + op;
-  let es = 50, os = 50;
-  if (tot > 0) { const imb = (ep / tot - 0.5) * 28; es -= imb; os += imb; }
-  const min  = new Date().getMinutes();
-  const entr = Math.sin(min * 0.314 + Date.now() % 1000 * 0.001) * 7;
-  es += entr; os -= entr;
-  if (lastPrice) { const mod = (lastPrice % 2 === 0 ? 2.5 : -2.5); es += mod; os -= mod; }
-  if (round?.currentBlock) { const bm = (Number(round.currentBlock) % 2 === 0 ? 2 : -2); es += bm; os -= bm; }
-  const rawTot = es + os;
-  es = Math.max(5, Math.min(95, Math.round(es / rawTot * 100)));
-  os = 100 - es;
-  const noise = Math.round((Math.random() - 0.5) * 4);
-  es = Math.max(5, Math.min(95, es + noise)); os = 100 - es;
-  const isEven = es > os;
-  const conf   = isEven ? es : os;
-  const confLbl = conf >= 65 ? 'HIGH' : conf >= 55 ? 'MODERATE' : 'LOW';
-  let reason = '';
-  if (tot > 0) {
-    const pct = Math.round(ep / tot * 100);
-    reason += pct + '% pool on EVEN → ' + (pct > 55 ? 'contrarian→ODD' : pct < 45 ? 'contrarian→EVEN' : 'balanced') + ' · ';
-  }
-  reason += 'Entropy=' + entr.toFixed(1) + ' · Block#' + (round?.currentBlock ?? '?').toString();
-  reason += ' · Note: BTC hashes are ~50/50 by design';
-  document.getElementById('aiEvenPct').innerText = es + '%';
-  document.getElementById('aiOddPct').innerText  = os + '%';
-  document.getElementById('aiEvenBar').style.width = es + '%';
-  document.getElementById('aiOddBar').style.width  = os + '%';
-  const recEl = document.getElementById('aiRec');
-  recEl.innerText = isEven ? '→ BET EVEN' : '→ BET ODD';
-  recEl.className = 'ai-rec ' + (isEven ? 'even' : 'odd');
-  document.getElementById('aiConf').innerText   = conf + '% · ' + confLbl;
-  document.getElementById('aiReason').innerText = reason;
-  document.getElementById('aiThinking').style.display = 'none';
-  document.getElementById('aiResult').style.display   = 'flex';
-  if (aiTimer) clearTimeout(aiTimer);
-  aiTimer = setTimeout(runAI, 30000);
-}
-
-// ─── UI ───────────────────────────────────────────────────────────────────────
-function setHint(txt, color) {
-  const h = document.getElementById('betHint'); h.innerText = txt; h.style.color = color;
-}
-function setSbar(ok, err) {
-  const el = document.getElementById('sbar');
-  if (ok) {
-    el.className = 'sbar ok';
-    el.innerHTML = '<span>🟢 OP_NET Testnet · Contract live</span><code>opt1sqqa...j30p9</code>' +
-      '<button onclick="showSettings()" style="margin-left:auto;background:transparent;border:1px solid rgba(247,147,26,0.4);color:var(--btc);padding:2px 8px;border-radius:4px;font-size:10px;cursor:pointer;font-family:inherit">&#x2699; Settings</button>';
-  } else {
-    el.className = 'sbar err';
-    el.innerHTML = '<span>⚠️ ' + (err || 'RPC error').slice(0,70) + '</span>' +
-      '<button onclick="showSettings()" style="margin-left:auto;background:transparent;border:1px solid rgba(247,147,26,0.4);color:var(--btc);padding:2px 8px;border-radius:4px;font-size:10px;cursor:pointer;font-family:inherit">&#x2699; Settings</button>';
-  }
-}
-function setSync() {
-  ['roundId','targetBlock'].forEach(id => document.getElementById(id).innerText = '—');
-  document.getElementById('curBlock').innerText  = '—';
-  document.getElementById('evenPool').innerText  = '0';
-  document.getElementById('oddPool').innerText   = '0';
-  document.getElementById('poolPct').innerText   = '50%';
-  document.getElementById('poolBar').style.width = '50%';
-  setPill('CONNECTING', 'p-sync');
-}
-function setPill(t, c) { const e = document.getElementById('pill'); e.innerText = t; e.className = 'pill ' + c; }
-function show(id) { const e = document.getElementById(id); if(e) { e.style.display = 'block'; e.disabled = false; } }
-function hide(id) { const e = document.getElementById(id); if(e) e.style.display = 'none'; }
-function hideAll() {
-  ['btnSettle','btnClaim','btnWd','btnNew'].forEach(hide);
-  document.getElementById('payBan').className = 'pay-ban';
-}
-function showHashViz(ew) {
-  document.getElementById('hashBox').style.display = 'block';
-  const n = ew ? 'c' : '9';
-  document.getElementById('hashD').innerHTML =
-    '<span style="color:var(--m)">000000000000000000024b5f8e3da7c...</span>' +
-    '<span class="hash-last">' + n + '</span>';
-  const p = document.getElementById('hashPar');
-  p.innerHTML = ew ? '🟢 EVEN (' + n + ' = 12)' : '🔴 ODD (' + n + ' = 9)';
-  p.className = 'par ' + (ew ? 'even' : 'odd');
-}
-function updateRoundUI() {
-  if (!round) { setSync(); return; }
-  document.getElementById('roundId').innerText     = '#' + round.roundId.toString();
-  document.getElementById('targetBlock').innerText = Number(round.targetBlock).toLocaleString();
-  document.getElementById('curBlock').innerText    = Number(round.currentBlock).toLocaleString();
-  const ep = Number(round.evenPool), op = Number(round.oddPool);
-  document.getElementById('evenPool').innerText = ep.toLocaleString();
-  document.getElementById('oddPool').innerText  = op.toLocaleString();
-  const tot = ep + op, pct = tot > 0 ? (ep / tot * 100).toFixed(1) : 50;
-  document.getElementById('poolPct').innerText   = pct + '%';
-  document.getElementById('poolBar').style.width = pct + '%';
-  const cur = Number(round.currentBlock), tgt = Number(round.targetBlock);
-  const ban = document.getElementById('resBan');
-  hideAll();
-  if (round.settled) {
-    const ew = round.winnerSide === 1;
-    setPill('SETTLED','p-sett');
-    ban.className = 'res-ban show ' + (ew ? 'ew' : 'ow');
-    ban.innerHTML = ew ? '🟢 EVEN WON — last nibble was even' : '🔴 ODD WON — last nibble was odd';
-    showHashViz(ew); show('btnNew');
-  } else if (cur >= tgt && tgt > 0) {
-    setPill('PENDING','p-pend'); ban.className = 'res-ban'; show('btnSettle');
-  } else {
-    setPill('OPEN','p-open'); ban.className = 'res-ban';
-  }
-  updateActBtns(); updateBtns(); if (aiOn) runAI();
-}
-function updateActBtns() {
-  if (!round || !myBet || !round.settled) return;
-  const tot  = myBet.even + myBet.odd;
-  const iWon = (round.winnerSide===1 && myBet.even>0n) || (round.winnerSide===2 && myBet.odd>0n);
-  if (iWon && !myBet.claimed && tot > 0n) show('btnClaim');
-  if (myPending > 0n) {
-    document.getElementById('btnWd').innerText = '⬇ Withdraw ' + s2btc(myPending) + ' BTC';
-    show('btnWd');
-  }
-}
-function updateBtns() {
-  const cur   = Number(round?.currentBlock || 0);
-  const tgt   = Number(round?.targetBlock  || 0);
-  const noBet = !myBet || (myBet.even === 0n && myBet.odd === 0n);
-  const canBet = wallet && round && !round.settled && (tgt === 0 || cur < tgt) && noBet && !isBusy;
-  document.getElementById('btnEven').disabled = !canBet;
-  document.getElementById('btnOdd').disabled  = !canBet;
-  if (!wallet)               { setHint('Connect OPWallet to start betting', 'var(--m)'); return; }
-  if (!round)                { setHint('⏳ Loading contract...', 'var(--m)'); return; }
-  if (round.settled)         { setHint('Round settled — start new round', 'var(--m)'); return; }
-  if (!noBet)                { setHint('✓ Bet placed — awaiting block #' + tgt.toLocaleString(), 'var(--even)'); return; }
-  if (cur >= tgt && tgt > 0) { setHint('⛏ Target mined — settle now!', 'var(--btc)'); return; }
-  setHint('Min: 10,000 sats · Target block #' + tgt.toLocaleString(), 'var(--m)');
-}
-
-// User rejection detection — also checks _userReject flag set by rpcWrite
-function isUserReject(e) {
-  if (e?._userReject) return true;
-  const m = (e?.message || String(e)).toLowerCase();
-  return m.includes('denied') || m.includes('cancel') || m.includes('dismissed')
-      || m.includes('user declined');
-}
-
-// ─── ACTIONS ──────────────────────────────────────────────────────────────────
-async function placeBet(isEven) {
-  if (!wallet) { alert('Connect OPWallet first'); return; }
-  if (isBusy) return;
-  const sats = parseInt(document.getElementById('betAmt').value);
-  if (!sats || sats < MIN_SATS) { alert('Minimum: ' + MIN_SATS.toLocaleString() + ' sats'); return; }
-  isBusy = true; updateBtns(); setHint('Confirm in OPWallet...', 'var(--btc)');
-  try {
-    const r = await rpcWrite('bet(bool,uint64)', [b8(isEven), u64be(sats)], sats);
-    const tx = r?.txid ?? r?.txId ?? '';
-    setHint('Sent!' + (tx ? ' ' + tx.slice(0,14) + '...' : '') + ' Waiting...', 'var(--even)');
-    fetchBalance(); setTimeout(() => { refreshRound(); refreshMyBet(); }, 8000);
-  } catch(e) {
-    if (isUserReject(e)) setHint('Cancelled', 'var(--m)');
-    else setHint('Error: ' + (e.message || 'Failed'), 'var(--odd)');
-  } finally { isBusy = false; updateBtns(); }
-}
-async function doSettle() {
-  const b = document.getElementById('btnSettle');
-  if (b.disabled) return;
-  b.disabled = true; b.innerText = 'Confirm in OPWallet...';
-  try { await rpcWrite('settle()', [], 0); setTimeout(refreshRound, 8000); }
-  catch(e) { b.disabled = false; b.innerText = 'Settle Round'; if (!isUserReject(e)) alert('Failed: ' + e.message); }
-}
-async function doClaim() {
-  const b = document.getElementById('btnClaim');
-  if (b.disabled) return;
-  b.disabled = true; b.innerText = 'Confirm in OPWallet...';
-  try {
-    await rpcWrite('claim()', [], 0);
-    const pb = document.getElementById('payBan');
-    pb.className = 'pay-ban win show'; pb.innerHTML = 'Claimed! Press Withdraw to receive BTC';
-    hide('btnClaim'); setTimeout(() => { refreshRound(); refreshMyBet(); }, 8000);
-  } catch(e) { b.disabled = false; b.innerText = 'Claim Winnings'; if (!isUserReject(e)) alert('Failed: ' + e.message); }
-}
-async function doWithdraw() {
-  const b = document.getElementById('btnWd');
-  if (b.disabled) return;
-  b.disabled = true; b.innerText = 'Confirm in OPWallet...';
-  try {
-    await rpcWrite('withdraw()', [], 0);
-    const pb = document.getElementById('payBan');
-    pb.className = 'pay-ban win show'; pb.innerHTML = s2btc(myPending) + ' BTC sent!';
-    myPending = 0n; hide('btnWd'); fetchBalance(); setTimeout(refreshMyBet, 8000);
-  } catch(e) { b.disabled = false; if (!isUserReject(e)) alert('Failed: ' + e.message); }
-}
-
-async function inspectWallet() {
-  // Scan ALL window properties for wallet-like objects
-  const found = {};
-  const CHECK = ['opnet','OPNet','opwallet','OPWallet','bitcoin','btc','opnetWallet',
-                 'unisat','xverse','leather','okxwallet'];
-  for (const k of CHECK) {
-    try {
-      const v = window[k];
-      if (v && typeof v === 'object') {
-        const methods = [];
-        for (const m of Object.keys(v)) {
-          try { if (typeof v[m] === 'function') methods.push(m); } catch(e){}
+        uint256 fee = (reward * platformFee) / DENOM;
+        uint256 payout = reward - fee;
+        if (token == address(0)) {
+            _safeETH(msg.sender, payout);
+            _safeETH(owner, fee);
+        } else {
+            IERC20(token).transfer(msg.sender, payout);
+            IERC20(token).transfer(owner, fee);
         }
-        try {
-          const proto = Object.getPrototypeOf(v);
-          if (proto) {
-            for (const m of Object.getOwnPropertyNames(proto)) {
-              if (m !== 'constructor' && !methods.includes(m)) {
-                try { if (typeof v[m] === 'function') methods.push(m+'*'); } catch(e){}
-              }
-            }
-          }
-        } catch(e){}
-        if (methods.length) found[k] = methods;
-      }
-    } catch(e){}
-  }
+        emit Claimed(roundId, token, msg.sender, payout);
+    }
 
-  if (Object.keys(found).length === 0) {
-    alert('No wallet objects found on window.\n\nMake sure OPWallet extension is installed and enabled.');
-    return;
-  }
+    // ═══════════════════════════════════════════════════════════════
+    // XP — DISTRIBUTION
+    // ═══════════════════════════════════════════════════════════════
 
-  let msg = '=== WALLET OBJECTS FOUND ===\n\n';
-  for (const [k, methods] of Object.entries(found)) {
-    msg += `window.${k}:\n  ${methods.join(', ')}\n\n`;
-  }
-  console.log(msg);
-  alert(msg);
+    /**
+     * @notice Distribute XP for the past week.
+     *         Call after Sunday 24:00 UTC.
+     *         Anyone can call — contract enforces the schedule.
+     */
+    function distributeXp() external {
+        _tickEpoch();
+        require(xpEpochsDone < xpEpochNow,  "Not Sunday yet");
+        require(xpEpochsDone < XP_WEEKS,     "All XP distributed");
+
+        uint256 ep  = xpEpochsDone;
+        uint256 tot = epochTotal[ep];
+
+        if (tot == 0) {
+            xpEpochsDone++;
+            emit XpEpochDone(ep, 0, 0);
+            return;
+        }
+
+        uint256 count = 0;
+        for (uint256 i = 0; i < players.length; i++) {
+            address p   = players[i];
+            uint256 vol = epochVolume[ep][p];
+            if (vol == 0) continue;
+            uint256 share = (XP_PER_WEEK * vol) / tot;
+            xpBalance[p] += share;
+            xpGiven      += share;
+            count++;
+            emit XpAwarded(ep, p, share);
+        }
+
+        xpEpochsDone++;
+        emit XpEpochDone(ep, XP_PER_WEEK, count);
+    }
+
+    /**
+     * @notice Batch distribution for large player sets (gas-safe).
+     * @param ep        Epoch number (== xpEpochsDone)
+     * @param from      Start index in players array
+     * @param to        End index (exclusive)
+     * @param finalize  true = finalize epoch (pass in last batch)
+     */
+    function distributeXpBatch(uint256 ep, uint256 from, uint256 to, bool finalize) external {
+        _tickEpoch();
+        require(ep == xpEpochsDone,   "Wrong epoch");
+        require(ep < xpEpochNow,      "Epoch not closed");
+        require(ep < XP_WEEKS,        "All XP distributed");
+        require(to <= players.length, "Out of bounds");
+
+        uint256 tot = epochTotal[ep];
+        if (tot == 0) {
+            if (finalize) { xpEpochsDone++; emit XpEpochDone(ep, 0, 0); }
+            return;
+        }
+
+        uint256 count = 0;
+        for (uint256 i = from; i < to; i++) {
+            address p   = players[i];
+            uint256 vol = epochVolume[ep][p];
+            if (vol == 0) continue;
+            uint256 share = (XP_PER_WEEK * vol) / tot;
+            xpBalance[p] += share;
+            xpGiven      += share;
+            count++;
+            emit XpAwarded(ep, p, share);
+        }
+
+        if (finalize) {
+            xpEpochsDone++;
+            emit XpEpochDone(ep, XP_PER_WEEK, count);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // XP — VIEW (for developer)
+    // ═══════════════════════════════════════════════════════════════
+
+    /// @notice Total unique players
+    function playerCount() external view returns (uint256) {
+        return players.length;
+    }
+
+    /**
+     * @notice All players with XP balances — for dev dashboard.
+     * @param offset  Start index
+     * @param limit   How many records to return
+     * @return addrs  Wallet addresses
+     * @return xp     XP balances (divide by 1e18 for display)
+     */
+    function getPlayersWithXp(uint256 offset, uint256 limit)
+        external view
+        returns (address[] memory addrs, uint256[] memory xp)
+    {
+        uint256 total = players.length;
+        if (offset >= total) return (new address[](0), new uint256[](0));
+        uint256 end  = offset + limit > total ? total : offset + limit;
+        uint256 size = end - offset;
+        addrs = new address[](size);
+        xp    = new uint256[](size);
+        for (uint256 i = 0; i < size; i++) {
+            addrs[i] = players[offset + i];
+            xp[i]    = xpBalance[players[offset + i]];
+        }
+    }
+
+    /**
+     * @notice XP schedule info for frontend countdown.
+     * @return nextDrop    Timestamp of next Sunday 24:00 UTC
+     * @return weeksLeft   Weeks of distribution remaining
+     * @return xpRemaining XP not yet distributed
+     */
+    function xpInfo() external view returns (
+        uint256 nextDrop,
+        uint256 weeksLeft,
+        uint256 xpRemaining
+    ) {
+        nextDrop    = xpStart + (xpEpochNow + 1) * WEEK;
+        weeksLeft   = xpEpochsDone < XP_WEEKS ? XP_WEEKS - xpEpochsDone : 0;
+        xpRemaining = XP_TOTAL > xpGiven ? XP_TOTAL - xpGiven : 0;
+    }
+
+    /// @notice Betting volume for a player in a given epoch
+    function playerEpochVolume(uint256 ep, address player)
+        external view returns (uint256)
+    {
+        return epochVolume[ep][player];
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // INTERNAL FUNCTIONS
+    // ═══════════════════════════════════════════════════════════════
+
+    function _track(address player, uint256 amount) internal {
+        if (!_known[player]) {
+            _known[player] = true;
+            players.push(player);
+            emit PlayerJoined(player);
+        }
+        epochVolume[xpEpochNow][player] += amount;
+        epochTotal[xpEpochNow]          += amount;
+    }
+
+    function _tickEpoch() internal {
+        if (block.timestamp < xpStart) return;
+        uint256 elapsed = (block.timestamp - xpStart) / WEEK;
+        if (elapsed > xpEpochNow) xpEpochNow = elapsed;
+    }
+
+    function _startNewRound(uint256 price) internal {
+        currentRound++;
+        rounds[currentRound] = Round({
+            startTime:  block.timestamp,
+            endTime:    block.timestamp + roundDuration,
+            startPrice: price,
+            endPrice:   0,
+            settled:    false,
+            outcome:    false
+        });
+        emit RoundStarted(currentRound, price);
+    }
+
+    function _safeETH(address to, uint256 amount) internal {
+        (bool ok, ) = to.call{value: amount}("");
+        require(ok, "ETH transfer failed");
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // ADMIN
+    // ═══════════════════════════════════════════════════════════════
+
+    function setRoundDuration(uint256 _d) external onlyOwner {
+        require(_d >= 60, "Min 60s");
+        roundDuration = _d;
+    }
+
+    function setPlatformFee(uint256 _f) external onlyOwner {
+        require(_f <= 500, "Max 5%");
+        platformFee = _f;
+    }
+
+    receive() external payable {}
 }
-
-let _newRoundBusy = false;
-async function doNewRound() {
-  if (_newRoundBusy) return;
-  if (!wallet) { alert('Connect OPWallet first'); return; }
-  _newRoundBusy = true;
-  const b = document.getElementById('btnNew');
-  b.disabled = true; b.innerText = 'Confirm in OPWallet...';
-  b.style.background = 'var(--m)'; b.style.color = '#000';
-  try {
-    const r = await rpcWrite('startNewRound()', [], 0);
-    const tx = r?.txid ?? r?.txId ?? r?.hash ?? '';
-    b.innerText = 'Sent!' + (tx ? ' ' + tx.slice(0,12) + '...' : '') + ' Waiting...';
-    document.getElementById('payBan').className = 'pay-ban';
-    document.getElementById('resBan').className = 'res-ban';
-    document.getElementById('hashBox').style.display = 'none';
-    myBet = null; myPending = 0n; document.getElementById('myBet').innerText = '—';
-    hideAll();
-    let tries = 0;
-    const poll = async () => {
-      tries++; b.innerText = 'Confirming (' + tries + '/12)...';
-      await refreshRound();
-      if (!round && tries < 12) setTimeout(poll, 6000);
-      else { b.style.background = ''; b.style.color = ''; _newRoundBusy = false; }
-    };
-    setTimeout(poll, 8000);
-  } catch(e) {
-    console.error('doNewRound:', e);
-    b.disabled = false;
-    b.innerText = 'Start First Round (Initialize Contract)';
-    b.style.background = 'var(--btc)'; b.style.color = '#000';
-    _newRoundBusy = false;
-    // FIX #4: Show friendly message for cancellation, not just silent fail
-    if (isUserReject(e)) {
-      setHint('Cancelled — press button again to retry', 'var(--m)');
-    } else {
-      alert('Failed:\n' + (e.message || String(e)));
-    }
-  }
-}
-
-// ─── PRICE ────────────────────────────────────────────────────────────────────
-function startPriceWS() {
-  const ws = new WebSocket('wss://stream.binance.com:9443/stream?streams=btcusdt@ticker');
-  ws.onmessage = e => {
-    const t = JSON.parse(e.data).data; if (!t) return;
-    const p = parseFloat(t.c), ch = parseFloat(t.P);
-    lastPrice = Math.round(p);
-    document.getElementById('chartPrice').innerText = '$' + Math.round(p).toLocaleString();
-    const el = document.getElementById('chartChg');
-    el.innerText = (ch >= 0 ? '+' : '') + ch.toFixed(2) + '%';
-    el.className = 'chg ' + (ch >= 0 ? 'pos' : 'neg');
-  };
-  let wsRetryDelay = 3000;
-  ws.onclose = () => { setTimeout(startPriceWS, wsRetryDelay); wsRetryDelay = Math.min(wsRetryDelay * 1.5, 30000); };
-  ws.onerror = () => ws.close();
-}
-
-// ─── TRADINGVIEW ──────────────────────────────────────────────────────────────
-new TradingView.widget({
-  container_id: 'tv_chart', symbol: 'BINANCE:BTCUSDT', interval: '1',
-  theme: 'dark', width: '100%', height: '100%', autosize: true,
-  hide_side_toolbar: true, allow_symbol_change: false, toolbar_bg: '#050505',
-  overrides: {
-    "paneProperties.background": "#080d08", "paneProperties.backgroundType": "solid",
-    "paneProperties.vertGridProperties.color": "rgba(247,147,26,0.04)",
-    "paneProperties.horzGridProperties.color": "rgba(247,147,26,0.04)",
-    "scalesProperties.textColor": "#555", "scalesProperties.backgroundColor": "#050505",
-  },
-  loading_screen: { backgroundColor: "#080d08", foregroundColor: "#f7931a" },
-});
-
-// ─── SETTINGS ─────────────────────────────────────────────────────────────────
-function showSettings() {
-  const m = document.getElementById('settingsModal');
-  document.getElementById('inputContract').value = window._contractOverride || getContract();
-  document.getElementById('inputRpc').value = workingRpc || RPC_URLS[0];
-  m.style.display = 'flex';
-}
-function hideSettings() {
-  document.getElementById('settingsModal').style.display = 'none';
-}
-function applySettings() {
-  const newContract = document.getElementById('inputContract').value.trim();
-  const newRpc      = document.getElementById('inputRpc').value.trim();
-  if (newContract && newContract.startsWith('opr1')) {
-    window._contractOverride = newContract;
-    window.__CONTRACT = newContract;
-  }
-  if (newRpc) { workingRpc = newRpc; RPC_URLS.unshift(newRpc); }
-  hideSettings();
-  round = null; myBet = null;
-  refreshRound();
-}
-document.getElementById('settingsModal').addEventListener('click', function(e) {
-  if (e.target === this) hideSettings();
-});
-
-// ─── INIT ─────────────────────────────────────────────────────────────────────
-startPriceWS(); setSync(); refreshRound();
-setInterval(refreshRound, 15000);
-setInterval(() => { if (wallet) fetchBalance(); }, 60000);
-
-// Session restore — retries until OPWallet injects window.opnet
-function tryRestoreSession(attempts) {
-  attempts = attempts || 0;
-  const opw = getOPWallet();
-  if (!opw) {
-    if (attempts < 15) setTimeout(() => tryRestoreSession(attempts + 1), 500);
-    return;
-  }
-  opw.getAccounts().then(async function(addrs) {
-    if (!addrs || !addrs.length) return;
-    try {
-      const pk   = await opw.getPublicKey();
-      const addr = addrs[0];
-      wallet    = { address: addr, publicKey: pk };
-      opnetAddr = await sha256hex(pk);
-      const short = addr.slice(0,10) + '...' + addr.slice(-6);
-      document.getElementById('walletAddr').innerText = short;
-      const btn = document.getElementById('btnConn');
-      btn.innerHTML = '<div class="wdot"></div>' + short;
-      btn.className = 'btn-conn on'; btn.onclick = null;
-      document.getElementById('btnDisc').style.display = 'flex';
-      updateBtns(); fetchBalance();
-      await refreshMyBet(); runAI();
-      try { opw.on && opw.on('disconnect', disconnectWallet); } catch(e) {}
-    } catch(e) { console.warn('restore:', e.message); }
-  }).catch(function() {});
-}
-window.addEventListener('load', function() { tryRestoreSession(0); });
-
-// ─── Graffiti background ──────────────────────────────────────────────────────
-(function() {
-  const canvas = document.getElementById('graffiti-bg');
-  const ctx = canvas.getContext('2d');
-  const NEON = '#f7931a';
-  const NEON2 = '#b8e530';
-  const WHITE = 'rgba(255,255,255,0.07)';
-  const DIM = 'rgba(247,147,26,0.08)';
-
-  function resize() {
-    canvas.width  = window.innerWidth;
-    canvas.height = window.innerHeight;
-    draw();
-  }
-
-  function randInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
-  function rand(min, max) { return Math.random() * (max - min) + min; }
-
-  let seed = 42;
-  function srnd() {
-    seed = (seed * 16807 + 0) % 2147483647;
-    return (seed - 1) / 2147483646;
-  }
-  function srandInt(min, max) { return Math.floor(srnd() * (max - min + 1)) + min; }
-  function srand(min, max) { return srnd() * (max - min) + min; }
-
-  function drawSprayPaint(ctx, x, y, radius, color, density = 60) {
-    ctx.save();
-    for (let i = 0; i < density; i++) {
-      const angle = srnd() * Math.PI * 2;
-      const r = Math.pow(srnd(), 0.5) * radius;
-      const px = x + Math.cos(angle) * r;
-      const py = y + Math.sin(angle) * r;
-      const alpha = srand(0.02, 0.18);
-      ctx.globalAlpha = alpha;
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(px, py, srand(0.5, 2.5), 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.restore();
-  }
-
-  function drawGraffitiLetter(ctx, x, y, letter, size, color, angle = 0) {
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(angle);
-    ctx.font = `900 ${size}px 'Syne', sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    drawSprayPaint(ctx, 0, 0, size * 0.7, color, 80);
-    ctx.shadowColor = color;
-    ctx.shadowBlur = size * 0.3;
-    ctx.globalAlpha = 0.06;
-    ctx.fillStyle = color;
-    ctx.fillText(letter, 3, 6);
-    ctx.globalAlpha = 0.18;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = size * 0.08;
-    ctx.lineJoin = 'round';
-    ctx.strokeText(letter, 0, 0);
-    ctx.globalAlpha = 0.09;
-    ctx.fillStyle = color;
-    ctx.fillText(letter, 0, 0);
-    const dripCount = srandInt(1, 3);
-    for (let d = 0; d < dripCount; d++) {
-      const dx = srand(-size * 0.3, size * 0.3);
-      const dripLen = srand(size * 0.2, size * 0.9);
-      const dripW = srand(2, 6);
-      ctx.globalAlpha = 0.12;
-      ctx.strokeStyle = color;
-      ctx.lineWidth = dripW;
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(dx, size * 0.4);
-      ctx.bezierCurveTo(
-        dx + srand(-8, 8), size * 0.5 + dripLen * 0.3,
-        dx + srand(-8, 8), size * 0.5 + dripLen * 0.7,
-        dx + srand(-4, 4), size * 0.4 + dripLen
-      );
-      ctx.stroke();
-      ctx.globalAlpha = 0.1;
-      ctx.beginPath();
-      ctx.arc(dx + srand(-4,4), size * 0.4 + dripLen, dripW * 1.5, 0, Math.PI * 2);
-      ctx.fillStyle = color;
-      ctx.fill();
-    }
-    ctx.restore();
-  }
-
-  function drawTag(ctx, x, y, text, size, color, skew = 0) {
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.transform(1, 0, skew, 1, 0, 0);
-    const letters = text.split('');
-    let ox = 0;
-    for (const l of letters) {
-      const angle = srand(-0.15, 0.15);
-      const vertJitter = srand(-size * 0.15, size * 0.15);
-      drawGraffitiLetter(ctx, ox, vertJitter, l, size, color, angle);
-      ox += size * srand(0.55, 0.72);
-    }
-    ctx.restore();
-  }
-
-  function drawLine(ctx, x1, y1, x2, y2, color, width, alpha) {
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = width;
-    ctx.lineCap = 'round';
-    ctx.shadowColor = color;
-    ctx.shadowBlur = width * 3;
-    ctx.beginPath();
-    ctx.moveTo(x1, y1);
-    ctx.lineTo(x2, y2);
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  function drawArrow(ctx, x, y, size, color) {
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(srand(-0.3, 0.3));
-    ctx.globalAlpha = 0.12;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = size * 0.08;
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    ctx.shadowColor = color;
-    ctx.shadowBlur = 10;
-    ctx.beginPath();
-    ctx.moveTo(0, size * 0.5);
-    ctx.lineTo(0, -size * 0.5);
-    ctx.moveTo(-size * 0.3, -size * 0.2);
-    ctx.lineTo(0, -size * 0.5);
-    ctx.lineTo(size * 0.3, -size * 0.2);
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  function drawHexagon(ctx, x, y, r, color) {
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(srand(0, Math.PI));
-    ctx.globalAlpha = srand(0.04, 0.1);
-    ctx.strokeStyle = color;
-    ctx.lineWidth = srand(1, 4);
-    ctx.shadowColor = color;
-    ctx.shadowBlur = 8;
-    ctx.beginPath();
-    for (let i = 0; i < 6; i++) {
-      const angle = (Math.PI / 3) * i;
-      const px = Math.cos(angle) * r;
-      const py = Math.sin(angle) * r;
-      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
-    }
-    ctx.closePath();
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  function draw() {
-    const W = canvas.width;
-    const H = canvas.height;
-    seed = 42;
-    ctx.clearRect(0, 0, W, H);
-
-    const bgGrad = ctx.createLinearGradient(0, 0, W, H);
-    bgGrad.addColorStop(0,   '#0d1a0a');
-    bgGrad.addColorStop(0.3, '#0a0f1a');
-    bgGrad.addColorStop(0.6, '#130d1f');
-    bgGrad.addColorStop(1,   '#0a1410');
-    ctx.fillStyle = bgGrad;
-    ctx.fillRect(0, 0, W, H);
-
-    const blobs = [
-      { x: W*0.08,  y: H*0.15, r: W*0.22, c: 'rgba(247,147,26,',  a: 0.13 },
-      { x: W*0.85,  y: H*0.75, r: W*0.28, c: 'rgba(247,147,26,',  a: 0.10 },
-      { x: W*0.5,   y: H*0.5,  r: W*0.35, c: 'rgba(74,222,128,',  a: 0.07 },
-      { x: W*0.9,   y: H*0.1,  r: W*0.18, c: 'rgba(248,113,113,', a: 0.10 },
-      { x: W*0.1,   y: H*0.85, r: W*0.20, c: 'rgba(248,113,113,', a: 0.08 },
-      { x: W*0.55,  y: H*0.2,  r: W*0.15, c: 'rgba(184,229,48,',  a: 0.09 },
-      { x: W*0.25,  y: H*0.55, r: W*0.12, c: 'rgba(247,147,26,',  a: 0.08 },
-      { x: W*0.75,  y: H*0.45, r: W*0.16, c: 'rgba(74,222,128,',  a: 0.08 },
-    ];
-
-    for (const b of blobs) {
-      const g = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r);
-      g.addColorStop(0,    b.c + (b.a * 2.5) + ')');
-      g.addColorStop(0.4,  b.c + b.a + ')');
-      g.addColorStop(0.75, b.c + (b.a * 0.3) + ')');
-      g.addColorStop(1,    b.c + '0)');
-      ctx.globalAlpha = 1;
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
-      ctx.fill();
-      for (let s = 0; s < 18; s++) {
-        const angle = srnd() * Math.PI * 2;
-        const dist  = srand(b.r * 0.5, b.r * 1.6);
-        const sx = b.x + Math.cos(angle) * dist;
-        const sy = b.y + Math.sin(angle) * dist;
-        const sr2 = srand(2, b.r * 0.12);
-        ctx.globalAlpha = srand(0.05, 0.18);
-        ctx.fillStyle = b.c + (b.a * 4) + ')';
-        ctx.beginPath();
-        ctx.save();
-        ctx.translate(sx, sy);
-        ctx.rotate(angle + Math.PI/2);
-        ctx.ellipse(0, 0, sr2 * 0.5, sr2, 0, 0, Math.PI * 2);
-        ctx.restore();
-        ctx.fill();
-      }
-    }
-
-    const strokes = [
-      { x1: W*0.0,  y1: H*0.3,  x2: W*0.4,  y2: H*0.15, c: NEON,            w: 80 },
-      { x1: W*0.6,  y1: H*0.85, x2: W*1.0,  y2: H*0.65, c: NEON2,           w: 60 },
-      { x1: W*0.2,  y1: H*0.9,  x2: W*0.7,  y2: H*0.95, c: '#4ade80',       w: 50 },
-      { x1: W*0.7,  y1: H*0.0,  x2: W*0.95, y2: H*0.35, c: '#f87171',       w: 55 },
-      { x1: W*0.0,  y1: H*0.65, x2: W*0.25, y2: H*0.5,  c: NEON,            w: 40 },
-    ];
-
-    for (const s of strokes) {
-      const sg = ctx.createLinearGradient(s.x1, s.y1, s.x2, s.y2);
-      sg.addColorStop(0,   s.c + '00');
-      sg.addColorStop(0.3, s.c + '22');
-      sg.addColorStop(0.5, s.c + '18');
-      sg.addColorStop(1,   s.c + '00');
-      ctx.globalAlpha = 1;
-      ctx.strokeStyle = sg;
-      ctx.lineWidth = s.w;
-      ctx.lineCap = 'round';
-      ctx.shadowColor = s.c;
-      ctx.shadowBlur = s.w * 0.8;
-      ctx.beginPath();
-      ctx.moveTo(s.x1, s.y1);
-      const mx = (s.x1 + s.x2) / 2 + srand(-W*0.1, W*0.1);
-      const my = (s.y1 + s.y2) / 2 + srand(-H*0.1, H*0.1);
-      ctx.quadraticCurveTo(mx, my, s.x2, s.y2);
-      ctx.stroke();
-      ctx.shadowBlur = 0;
-    }
-
-    for (let i = 0; i < 4000; i++) {
-      ctx.globalAlpha = srand(0.01, 0.05);
-      ctx.fillStyle = srnd() > 0.6 ? '#ffffff' : (srnd() > 0.5 ? NEON : '#333');
-      const px = srnd() * W, py = srnd() * H;
-      ctx.fillRect(px, py, srand(0.5, 2), srand(0.5, 2));
-    }
-
-    drawTag(ctx, W * 0.02, H * 0.18, 'BLOCKBET', Math.min(W * 0.075, 90), NEON, -0.05);
-    drawTag(ctx, W * 0.55, H * 0.72, 'OPNET', Math.min(W * 0.065, 80), NEON2, 0.04);
-    drawTag(ctx, W * 0.05, H * 0.82, 'BTC', Math.min(W * 0.1, 120), NEON, -0.08);
-    drawTag(ctx, W * 0.6,  H * 0.12, 'BITCOIN', Math.min(W * 0.055, 70), 'rgba(255,255,255,0.5)', 0.06);
-    drawTag(ctx, W * 0.3,  H * 0.45, 'WIN', Math.min(W * 0.12, 140), NEON2, -0.03);
-    drawTag(ctx, W * 0.7,  H * 0.38, '0xCHAIN', Math.min(W * 0.045, 55), NEON, 0.03);
-    drawTag(ctx, W * 0.15, H * 0.6,  'UP', Math.min(W * 0.09, 110), NEON, 0.05);
-    drawTag(ctx, W * 0.75, H * 0.6,  'DOWN', Math.min(W * 0.07, 85), '#f87171', -0.04);
-
-    for (let i = 0; i < 18; i++) {
-      drawHexagon(ctx, srnd() * W, srnd() * H, srand(20, 90), i % 3 === 0 ? NEON : NEON2);
-    }
-    for (let i = 0; i < 12; i++) {
-      drawArrow(ctx, srnd() * W, srnd() * H, srand(30, 80), srnd() > 0.5 ? NEON : '#f87171');
-    }
-    for (let i = 0; i < 25; i++) {
-      const x1 = srnd() * W, y1 = srnd() * H;
-      const x2 = x1 + srand(-200, 200), y2 = y1 + srand(-80, 80);
-      drawLine(ctx, x1, y1, x2, y2, srnd() > 0.7 ? NEON : 'rgba(255,255,255,0.3)', srand(0.5, 3), srand(0.02, 0.07));
-    }
-    for (let i = 0; i < 20; i++) {
-      drawSprayPaint(ctx, srnd() * W, srnd() * H, srand(30, 120), srnd() > 0.5 ? NEON : NEON2, 40);
-    }
-
-    ctx.globalAlpha = 0.55;
-    ctx.fillStyle = '#080808';
-    ctx.fillRect(0, 0, W, H);
-
-    const vignette = ctx.createRadialGradient(W/2, H/2, H*0.2, W/2, H/2, H);
-    vignette.addColorStop(0,   'rgba(0,0,0,0)');
-    vignette.addColorStop(0.7, 'rgba(0,0,0,0.2)');
-    vignette.addColorStop(1,   'rgba(0,0,0,0.75)');
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = vignette;
-    ctx.fillRect(0, 0, W, H);
-  }
-
-  window.addEventListener('resize', resize);
-  document.fonts.ready.then(resize);
-  resize();
-})();
-</script>
-</body>
-</html>
